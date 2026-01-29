@@ -6,7 +6,8 @@
 
 import { chromium, type Browser, type Page } from 'playwright';
 import { logger } from '../lib/index.js';
-import { lookupXProfile, generateXSearchUrls } from './x-twitter.js';
+import { generateXSearchUrls } from './x-twitter.js'; // Removed lookupXProfile
+import { deepRecon, type DeepReconResult } from './deep-recon.js';
 import { searchGitHub } from './github-osint.js';
 import { searchPastes } from './paste-search.js';
 import { scrapeRedditUser } from './reddit-osint.js';
@@ -51,6 +52,7 @@ export interface MasterReconResult {
         profileUrl: string;
         searchUrls: Record<string, string>;
     };
+    twitterAnalysis: DeepReconResult | null;
     websiteCrawl: WebsiteCrawlResult | null;
     github: {
         found: boolean;
@@ -235,6 +237,7 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
             profileUrl: `https://x.com/${cleanUsername}`,
             searchUrls: generateXSearchUrls(cleanUsername),
         },
+        twitterAnalysis: null,
         websiteCrawl: null,
         github: {
             found: false,
@@ -274,8 +277,8 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
 
     // Run all searches in parallel for speed
     const [xResult, githubResult, pasteResult, redditResult, platformResult] = await Promise.allSettled([
-        lookupXProfile(cleanUsername).catch(e => {
-            logger.warn('X lookup failed:', e);
+        deepRecon(cleanUsername, { maxTweets: 30, crawlLinks: true, maxCrawlLinks: 5 }).catch(e => {
+            logger.warn('Deep X recon failed:', e);
             return null;
         }),
         searchGitHub(cleanUsername, { searchCode: true, getProfile: true }).catch(e => {
@@ -296,20 +299,30 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
         }),
     ]);
 
-    // Process X/Twitter result
+    // Process X/Twitter result (Deep Recon)
     let websiteUrl: string | null = null;
     if (xResult.status === 'fulfilled' && xResult.value) {
         const x = xResult.value;
-        if (x.displayName || x.bio) {
+        result.twitterAnalysis = x;
+
+        if (x.profile.displayName || x.profile.bio) {
             result.x.found = true;
-            result.x.displayName = x.displayName;
-            result.x.bio = x.bio;
-            result.x.followers = x.followers;
-            result.x.website = x.website;
-            if (x.website) {
-                result.aggregated.allUrls.push(x.website);
-                websiteUrl = x.website;
+            result.x.displayName = x.profile.displayName;
+            result.x.bio = x.profile.bio;
+            result.x.followers = x.profile.followers;
+            result.x.website = x.profile.website;
+
+            if (x.profile.website) {
+                result.aggregated.allUrls.push(x.profile.website);
+                websiteUrl = x.profile.website;
             }
+
+            // Aggregate Deep PII
+            result.aggregated.allEmails.push(...x.aggregatedPII.emails);
+            result.aggregated.allPhones.push(...x.aggregatedPII.phones);
+            result.aggregated.allUrls.push(...x.aggregatedPII.externalUrls);
+            result.aggregated.allUsernames.push(...x.aggregatedPII.xMentions);
+            result.aggregated.allUsernames.push(...x.aggregatedPII.githubProfiles);
         }
     }
 

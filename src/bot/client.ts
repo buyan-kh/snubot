@@ -8,16 +8,10 @@ import { logger, checkDiscordRateLimit } from '../lib/index.js';
 import type { Command } from './types.js';
 
 // Import commands
-import xCommand from './commands/x.js';
+// Import commands
 import emailCommand from './commands/email.js';
-import usernameCommand from './commands/username.js';
 import privacyCommand from './commands/privacy.js';
 import googleCommand from './commands/google.js';
-import deepreconCommand from './commands/deeprecon.js';
-import githubCommand from './commands/github.js';
-import pastesCommand from './commands/pastes.js';
-import redditCommand from './commands/reddit.js';
-import discordCommand from './commands/discord.js';
 import reconCommand from './commands/recon.js';
 
 export function createClient(): Client {
@@ -27,16 +21,9 @@ export function createClient(): Client {
 
     // Create commands collection
     const commands = new Collection<string, Command>();
-    commands.set(xCommand.data.name, xCommand);
     commands.set(emailCommand.data.name, emailCommand);
-    commands.set(usernameCommand.data.name, usernameCommand);
     commands.set(privacyCommand.data.name, privacyCommand);
     commands.set(googleCommand.data.name, googleCommand);
-    commands.set(deepreconCommand.data.name, deepreconCommand);
-    commands.set(githubCommand.data.name, githubCommand);
-    commands.set(pastesCommand.data.name, pastesCommand);
-    commands.set(redditCommand.data.name, redditCommand);
-    commands.set(discordCommand.data.name, discordCommand);
     commands.set(reconCommand.data.name, reconCommand);
 
     // Attach to client for access in handlers

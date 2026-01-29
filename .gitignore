@@ -1,39 +1,63 @@
 # Dependencies
 node_modules/
+.pnpm-store/
 
-# Build output
+# Build
 dist/
+build/
+out/
+coverage/
 
-# Environment
+# Environment Variables
 .env
-.env.local
-.env.*.local
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
+.env.*
+!.env.example
+!.env.test
 
 # Logs
 logs/
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log.en_us
 
-# Test coverage
-coverage/
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-# Cache
-.cache/
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*.sublime-project
+*.sublime-workspace
+
+# TypeScript
 *.tsbuildinfo
 
 # Playwright
-playwright-report/
 test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
-# Output
+# Docker
+docker-compose.override.yml
+
+# Temporary / Cache
+.cache/
+.temp/
+tmp/
+
+# Application Specific
 output/

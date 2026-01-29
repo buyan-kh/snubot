@@ -178,6 +178,50 @@ const command: Command = {
                 xEmbed.addFields({ name: '🔍 Advanced Search', value: searchLinks, inline: false });
 
                 embeds.push(xEmbed);
+
+                // Twitter Deep Analysis Embed
+                if (result.twitterAnalysis) {
+                    const ta = result.twitterAnalysis;
+                    const deepEmbed = new EmbedBuilder()
+                        .setTitle('🐦 Twitter Network & Intel')
+                        .setColor(0x1da1f2);
+
+                    // Connection Graph
+                    const topMentions = [...ta.connectionGraph.mentions.entries()]
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 8);
+
+                    if (topMentions.length > 0) {
+                        deepEmbed.addFields({
+                            name: '👥 Top Interactions',
+                            value: topMentions.map(([m, c]) => `[@${m}](https://x.com/${m}) (${c})`).join('\n'),
+                            inline: true,
+                        });
+                    }
+
+                    // Intel from Tweets
+                    const pii = ta.aggregatedPII;
+                    const intelItems: string[] = [];
+                    if (pii.emails.length > 0) intelItems.push(`📧 **Emails:** ${pii.emails.slice(0, 3).join(', ')}`);
+                    if (pii.phones.length > 0) intelItems.push(`📱 **Phones:** ${pii.phones.slice(0, 3).join(', ')}`);
+                    if (pii.discordHandles.length > 0) intelItems.push(`🎮 **Discord:** ${pii.discordHandles.slice(0, 3).join(', ')}`);
+                    if (pii.telegramHandles.length > 0) intelItems.push(`📨 **Telegram:** ${pii.telegramHandles.slice(0, 3).join(', ')}`);
+
+                    if (intelItems.length > 0) {
+                        deepEmbed.addFields({
+                            name: '🕵️ Intel from Tweets',
+                            value: intelItems.join('\n'),
+                            inline: false,
+                        });
+                    }
+
+                    // Stats footer
+                    deepEmbed.setFooter({
+                        text: `Analyzed ${ta.tweets.length} tweets & ${ta.crawledPages.length} links`
+                    });
+
+                    embeds.push(deepEmbed);
+                }
             }
 
             // Website Crawl embed (if X profile had a linked website)

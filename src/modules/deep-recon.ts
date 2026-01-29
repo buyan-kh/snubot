@@ -64,6 +64,12 @@ export interface DeepReconResult {
         location: string;
         website: string;
         joinedDate: string;
+        followers: number;
+        following: number;
+        tweetCount: number;
+        profileImageUrl: string;
+        bannerImageUrl: string | null;
+        verified: boolean;
     };
     tweets: TweetData[];
     crawledPages: CrawledPage[];
@@ -86,6 +92,29 @@ async function getBrowser(): Promise<Browser> {
         });
     }
     return browser;
+}
+
+/**
+ * Parse count strings like "1.5K", "2M", "500"
+ */
+function parseCount(str: string): number {
+    const clean = str.replace(/,/g, '');
+    const match = clean.match(/([\d.]+)([KMB])?/);
+    if (!match) return 0;
+
+    const num = parseFloat(match[1]);
+    const suffix = match[2];
+
+    switch (suffix) {
+        case 'K':
+            return Math.round(num * 1000);
+        case 'M':
+            return Math.round(num * 1000000);
+        case 'B':
+            return Math.round(num * 1000000000);
+        default:
+            return Math.round(num);
+    }
 }
 
 /**
@@ -359,6 +388,12 @@ export async function deepRecon(username: string, options: {
             location: '',
             website: '',
             joinedDate: '',
+            followers: 0,
+            following: 0,
+            tweetCount: 0,
+            profileImageUrl: '',
+            bannerImageUrl: null,
+            verified: false,
         },
         tweets: [],
         crawledPages: [],
@@ -400,6 +435,38 @@ export async function deepRecon(username: string, options: {
 
             const joinedEl = await page.$('[data-testid="UserJoinDate"]');
             result.profile.joinedDate = await joinedEl?.textContent() ?? '';
+
+            // Images
+            const avatarEl = await page.$('[data-testid="UserAvatar-Container-unknown"] img');
+            result.profile.profileImageUrl = (await avatarEl?.getAttribute('src')) ?? '';
+
+            const bannerEl = await page.$('a[href$="/header_photo"] img');
+            result.profile.bannerImageUrl = (await bannerEl?.getAttribute('src')) ?? null;
+
+            // Verified badge
+            const verifiedEl = await page.$('[data-testid="UserName"] [data-testid="icon-verified"]');
+            result.profile.verified = verifiedEl !== null;
+
+            // Stats
+            const statsElements = await page.$$('[data-testid="UserProfileHeader_Items"] a[href*="/followers"], [data-testid="UserProfileHeader_Items"] a[href*="/following"]');
+            for (const el of statsElements) {
+                const href = await el.getAttribute('href');
+                const text = await el.textContent() ?? '';
+                const numMatch = text.match(/[\d,.]+[KMB]?/);
+                const num = numMatch ? parseCount(numMatch[0]) : 0;
+
+                if (href?.includes('/followers')) {
+                    result.profile.followers = num;
+                } else if (href?.includes('/following')) {
+                    result.profile.following = num;
+                }
+            }
+
+            // Tweet count
+            const headerEl = await page.$('h2[role="heading"]');
+            const headerText = await headerEl?.textContent() ?? '';
+            const tweetMatch = headerText.match(/[\d,.]+[KMB]?/);
+            result.profile.tweetCount = tweetMatch ? parseCount(tweetMatch[0]) : 0;
 
             // Extract PII from profile
             const profileText = `${result.profile.displayName} ${result.profile.bio} ${result.profile.location}`;

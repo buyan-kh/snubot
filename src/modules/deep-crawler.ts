@@ -1,6 +1,7 @@
 /**
  * Deep OSINT Crawler
  * Automatically follows leads, executes dorks, and builds complete digital footprint
+ * Uses Bing Search (HTML) to bypass Google/DDG blocks
  */
 
 import { chromium, type Browser, type Page } from 'playwright';
@@ -120,37 +121,64 @@ export function generateCryptoScamDorks(username: string, emails: string[] = [])
 }
 
 /**
- * Execute a DuckDuckGo search and return result URLs
- * Uses HTML version to avoid JS complexity and some CAPTCHAs
+ * Execute a Bing search and return result URLs
+ * Extracts 'u' parameter from tracking links and decodes base64
  */
 async function executeSearch(page: Page, query: string): Promise<string[]> {
     const urls: string[] = [];
 
     try {
-        const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
         await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: CRAWL_TIMEOUT_MS });
 
         // Wait for results
         try {
-            await page.waitForSelector('.result__a', { timeout: 5000 });
+            await page.waitForSelector('li.b_algo', { timeout: 5000 });
         } catch {
             // No results or different layout
         }
 
-        // Extract result URLs from DDG HTML
-        const resultLinks = await page.$$eval('.result__a', (links) =>
+        // Extract raw result links (often tracking links)
+        const rawLinks = await page.$$eval('li.b_algo h2 a', (links) =>
             links
                 .map(l => l.getAttribute('href') || '')
-                .filter(href =>
-                    href.startsWith('http') &&
-                    !href.includes('duckduckgo.com') &&
-                    !href.includes('search.yahoo.com') &&
-                    !href.includes('bing.com')
-                )
+                .filter(href => href.startsWith('http'))
         );
 
-        urls.push(...resultLinks.slice(0, MAX_PAGES_PER_DORK));
-        logger.info(`DDG search "${query.slice(0, 40)}...": found ${urls.length} URLs`);
+        // Decode URLs
+        for (const rawLink of rawLinks) {
+            try {
+                // If it's a Bing tracking link
+                if (rawLink.includes('bing.com/ck/a')) {
+                    const uParam = new URL(rawLink).searchParams.get('u');
+                    if (uParam) {
+                        // Strip 'a1' prefix and decode standard base64/base64url
+                        // Clean 'a1' and convert any URL-safe chars (not strictly needed for Buffer)
+                        const base64Str = uParam.substring(2).replace(/-/g, '+').replace(/_/g, '/');
+                        // Add padding if needed
+                        const padded = base64Str.padEnd(base64Str.length + (4 - base64Str.length % 4) % 4, '=');
+                        const decoded = Buffer.from(padded, 'base64').toString('utf-8');
+
+                        if (decoded.startsWith('http')) {
+                            urls.push(decoded);
+                        }
+                    }
+                } else {
+                    // Direct link (rare on Bing but possible)
+                    urls.push(rawLink);
+                }
+            } catch {
+                // Ignore decode errors
+            }
+        }
+
+        const cleanUrls = urls.filter(u =>
+            !u.includes('microsoft.com') &&
+            !u.includes('bing.com')
+        );
+
+        logger.info(`Bing search "${query.slice(0, 40)}...": found ${cleanUrls.length} URLs`);
+        return cleanUrls.slice(0, MAX_PAGES_PER_DORK);
 
     } catch (error) {
         logger.warn(`Search failed for "${query}":`, error);
@@ -311,7 +339,7 @@ export async function deepCrawl(
 
     try {
         await page.setExtraHTTPHeaders({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         });
 
         // Generate and execute scam-focused dorks
