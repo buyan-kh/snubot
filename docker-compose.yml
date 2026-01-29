@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: osint-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  maigret:
+    build:
+      context: .
+      dockerfile: Dockerfile.maigret
+    container_name: osint-maigret
+    volumes:
+      - maigret-output:/app/output
+    environment:
+      - PYTHONUNBUFFERED=1
+
+volumes:
+  redis-data:
+  maigret-output:

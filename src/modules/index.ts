@@ -1,0 +1,17 @@
+export { lookupXProfile, generateXSearchUrls } from './x-twitter.js';
+export { lookupEmail, formatBreachSummary } from './email-osint.js';
+export { lookupUsername, groupProfilesByCategory } from './username-crosscheck.js';
+export { searchGoogle, generateOsintDorks, executeOsintDorks } from './google-search.js';
+export type { GoogleSearchResult, GoogleSearchResponse } from './google-search.js';
+export { deepRecon, formatDeepReconSummary } from './deep-recon.js';
+export type { DeepReconResult, ExtractedPII, TweetData, CrawledPage } from './deep-recon.js';
+export { searchGitHub } from './github-osint.js';
+export type { GitHubCodeResult, GitHubUserProfile, GitHubSearchResult } from './github-osint.js';
+export { searchPastes, checkCommonPastePatterns } from './paste-search.js';
+export type { PasteResult, PasteSearchResult } from './paste-search.js';
+export { scrapeRedditUser, searchReddit } from './reddit-osint.js';
+export type { RedditProfile, RedditPost, RedditOsintResult } from './reddit-osint.js';
+export { discordOsint } from './discord-osint.js';
+export type { DiscordOsintResult } from './discord-osint.js';
+export { masterRecon } from './master-recon.js';
+export type { MasterReconResult } from './master-recon.js';
