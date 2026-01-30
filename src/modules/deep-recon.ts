@@ -6,7 +6,7 @@
  * - Builds a network graph of connected identities
  */
 
-import { chromium, type Browser, type Page } from 'playwright';
+import { type Page } from 'playwright';
 import { logger } from '../lib/index.js';
 
 // PII extraction patterns

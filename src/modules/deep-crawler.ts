@@ -4,7 +4,7 @@
  * Uses Bing Search (HTML) to bypass Google/DDG blocks
  */
 
-import { chromium, type Browser, type Page } from 'playwright';
+import { type Page } from 'playwright';
 import { logger } from '../lib/index.js';
 
 import { getBrowser } from '../lib/browser.js';

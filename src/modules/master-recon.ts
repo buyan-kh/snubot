@@ -4,7 +4,7 @@
  * Includes website link following for additional leads
  */
 
-import { type Browser, type Page } from 'playwright'; // Removed chromium import
+import { type Page } from 'playwright';
 import { getBrowser } from '../lib/browser.js';
 import { logger } from '../lib/index.js';
 import { generateXSearchUrls } from './x-twitter.js'; // Removed lookupXProfile
