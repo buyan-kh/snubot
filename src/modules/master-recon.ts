@@ -4,7 +4,8 @@
  * Includes website link following for additional leads
  */
 
-import { chromium, type Browser, type Page } from 'playwright';
+import { type Browser, type Page } from 'playwright'; // Removed chromium import
+import { getBrowser } from '../lib/browser.js';
 import { logger } from '../lib/index.js';
 import { generateXSearchUrls } from './x-twitter.js'; // Removed lookupXProfile
 import { deepRecon, type DeepReconResult } from './deep-recon.js';
@@ -13,18 +14,6 @@ import { searchPastes } from './paste-search.js';
 import { scrapeRedditUser } from './reddit-osint.js';
 import { lookupUsername } from './username-crosscheck.js';
 import { deepCrawl, type DeepCrawlResult } from './deep-crawler.js';
-
-let browser: Browser | null = null;
-
-async function getBrowser(): Promise<Browser> {
-    if (!browser) {
-        browser = await chromium.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        });
-    }
-    return browser;
-}
 
 export interface WebsiteCrawlResult {
     url: string;

@@ -7,17 +7,9 @@
 import { chromium, type Browser, type Page } from 'playwright';
 import { logger } from '../lib/index.js';
 
-let browser: Browser | null = null;
+import { getBrowser } from '../lib/browser.js';
 
-async function getBrowser(): Promise<Browser> {
-    if (!browser) {
-        browser = await chromium.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        });
-    }
-    return browser;
-}
+// Local browser instance removed in favor of shared one
 
 // Limits to prevent infinite crawling
 const MAX_PAGES_PER_DORK = 5;

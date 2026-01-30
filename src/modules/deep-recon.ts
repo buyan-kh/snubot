@@ -82,17 +82,10 @@ export interface DeepReconResult {
     errors: string[];
 }
 
-let browser: Browser | null = null;
+import { getBrowser } from '../lib/browser.js';
 
-async function getBrowser(): Promise<Browser> {
-    if (!browser) {
-        browser = await chromium.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        });
-    }
-    return browser;
-}
+// Remove local getBrowser and browser variable
+// const browser = ... (removed)
 
 /**
  * Parse count strings like "1.5K", "2M", "500"

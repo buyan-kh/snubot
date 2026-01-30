@@ -22,6 +22,9 @@ const command: Command = {
         ) as SlashCommandBuilder,
 
     async execute(interaction: ChatInputCommandInteraction): Promise<void> {
+        // Defer immediately to avoid "The application did not respond" timeout
+        await interaction.deferReply();
+
         let username = interaction.options.getString('username', true).trim();
 
         // Fix common user error: accidentally pasting the full command
@@ -31,8 +34,6 @@ const command: Command = {
 
         // Basic sanitization
         username = username.split(' ')[0]; // Take only the first word if there are spaces
-
-        await interaction.deferReply();
 
         try {
             logger.info(`Master recon: ${username}`);
