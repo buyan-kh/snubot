@@ -26,7 +26,7 @@ const envSchema = z.object({
     CACHE_TTL_USERNAME: z.coerce.number().default(3600),
 
     // Server
-    API_PORT: z.coerce.number().default(3000),
+    API_PORT: z.coerce.number().default(Number(process.env.PORT) || 3000),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 
