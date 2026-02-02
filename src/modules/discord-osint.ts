@@ -20,10 +20,13 @@ export interface DiscordOsintResult {
     pastes: {
         results: PasteMention[];
         extractedEmails: string[];
+        extractedEmails: string[];
+        extractedPhones: string[];
         extractedUrls: string[];
     };
     crossPlatform: {
         possibleEmails: string[];
+        possiblePhones: string[];
         possibleUsernames: string[];
         linkedAccounts: string[];
     };
@@ -70,17 +73,23 @@ export const DISCORD_PATTERNS = {
     userId: /\b\d{17,19}\b/g,
 };
 
+const PHONE_REGEX = /(?:(?:\+|00)\d{1,3})?[-.\s]?(?:\(?\d{1,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g;
+
 /**
  * Search GitHub for Discord handle mentions
  */
 async function searchGitHubForDiscord(page: Page, handle: string): Promise<{
     codeResults: GitHubMention[];
     commitResults: GitHubMention[];
+    codeResults: GitHubMention[];
+    commitResults: GitHubMention[];
     relatedUsers: string[];
+    extractedPhones: string[];
 }> {
     const codeResults: GitHubMention[] = [];
     const commitResults: GitHubMention[] = [];
     const relatedUsers: string[] = [];
+    const extractedPhones: string[] = [];
 
     try {
         // Search commits (more reliable, doesn't require login)
@@ -112,8 +121,13 @@ async function searchGitHubForDiscord(page: Page, handle: string): Promise<{
                         repo,
                         url: url.startsWith('http') ? url : `https://github.com${url}`,
                         snippet: snippet.slice(0, 200).trim(),
+                        snippet: snippet.slice(0, 200).trim(),
                         context: 'commit',
                     });
+
+                    // Check snippet for phones
+                    const phones = snippet.match(PHONE_REGEX);
+                    if (phones) extractedPhones.push(...phones);
 
                     // Track repo owner as related user
                     const owner = repo.split('/')[0];
@@ -165,6 +179,10 @@ async function searchGitHubForDiscord(page: Page, handle: string): Promise<{
                             snippet: snippet.slice(0, 200).trim(),
                             context,
                         });
+
+                        // Check snippet for phones
+                        const phones = snippet.match(PHONE_REGEX);
+                        if (phones) extractedPhones.push(...phones);
                     }
                 } catch {
                     // Skip malformed result
@@ -178,7 +196,7 @@ async function searchGitHubForDiscord(page: Page, handle: string): Promise<{
         logger.warn('GitHub Discord search failed:', error);
     }
 
-    return { codeResults, commitResults, relatedUsers };
+    return { codeResults, commitResults, relatedUsers, extractedPhones: [...new Set(extractedPhones)] };
 }
 
 /**
@@ -187,10 +205,14 @@ async function searchGitHubForDiscord(page: Page, handle: string): Promise<{
 async function searchPastesForDiscord(page: Page, handle: string): Promise<{
     results: PasteMention[];
     extractedEmails: string[];
+    results: PasteMention[];
+    extractedEmails: string[];
+    extractedPhones: string[];
     extractedUrls: string[];
 }> {
     const results: PasteMention[] = [];
     const extractedEmails: string[] = [];
+    const extractedPhones: string[] = [];
     const extractedUrls: string[] = [];
 
     try {
@@ -250,6 +272,9 @@ async function searchPastesForDiscord(page: Page, handle: string): Promise<{
                     extractedEmails.push(...emails.map((e: string) => e.toLowerCase()));
                 }
 
+                const phones = snippet.match(PHONE_REGEX);
+                if (phones) extractedPhones.push(...phones);
+
             } catch {
                 // Skip malformed result
             }
@@ -269,6 +294,12 @@ async function searchPastesForDiscord(page: Page, handle: string): Promise<{
                 const emails = content.match(emailPattern) as string[] | null;
                 if (emails) {
                     extractedEmails.push(...emails.map((e) => e.toLowerCase()));
+                }
+
+                // Extract Phones
+                const phones = content.match(PHONE_REGEX);
+                if (phones) {
+                    extractedPhones.push(...phones);
                 }
 
                 // Extract URLs
@@ -292,6 +323,7 @@ async function searchPastesForDiscord(page: Page, handle: string): Promise<{
     return {
         results,
         extractedEmails: [...new Set(extractedEmails)],
+        extractedPhones: [...new Set(extractedPhones)],
         extractedUrls: [...new Set(extractedUrls)],
     };
 }
@@ -306,7 +338,7 @@ function generateSearchUrls(handle: string): string[] {
         `https://github.com/search?q="${encoded}"&type=code`,
         `https://www.google.com/search?q="${encoded}"+site:pastebin.com`,
         `https://www.reddit.com/search/?q=${encoded}+discord`,
-        `https://twitter.com/search?q=${encoded}`,
+        `https://x.com/search?q=${encoded}`,
     ];
 }
 
@@ -326,14 +358,17 @@ export async function discordOsint(handle: string): Promise<DiscordOsintResult> 
             codeResults: [],
             commitResults: [],
             relatedUsers: [],
+            extractedPhones: [],
         },
         pastes: {
             results: [],
             extractedEmails: [],
+            extractedPhones: [],
             extractedUrls: [],
         },
         crossPlatform: {
             possibleEmails: [],
+            possiblePhones: [],
             possibleUsernames: [],
             linkedAccounts: [],
         },
@@ -362,6 +397,12 @@ export async function discordOsint(handle: string): Promise<DiscordOsintResult> 
 
         // Aggregate cross-platform intel
         result.crossPlatform.possibleEmails = [...new Set(pasteResults.extractedEmails)];
+        result.crossPlatform.possiblePhones = [
+            ...new Set([
+                ...pasteResults.extractedPhones,
+                ...githubResults.extractedPhones
+            ])
+        ];
         result.crossPlatform.possibleUsernames = [
             normalizedHandle,
             ...githubResults.relatedUsers,
@@ -369,7 +410,7 @@ export async function discordOsint(handle: string): Promise<DiscordOsintResult> 
 
         // Look for linked accounts in paste URLs
         for (const url of pasteResults.extractedUrls) {
-            if (url.includes('twitter.com') || url.includes('x.com')) {
+            if (url.includes('x.com') || url.includes('x.com')) {
                 result.crossPlatform.linkedAccounts.push(url);
             } else if (url.includes('github.com')) {
                 result.crossPlatform.linkedAccounts.push(url);

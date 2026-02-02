@@ -259,7 +259,7 @@ async function runMaigret(username: string): Promise<{ profiles: FoundProfile[];
  */
 function generateUsernameDorks(username: string): string[] {
     return [
-        `"${username}" -site:x.com -site:twitter.com`,
+        `"${username}" -site:x.com -site:x.com`,
         `"${username}" email OR "@" ".com"`,
         `"${username}" site:github.com`,
         `"${username}" site:linkedin.com`,

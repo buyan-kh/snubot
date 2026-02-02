@@ -221,7 +221,7 @@ export function generateOsintDorks(identifier: string, type: 'username' | 'email
     switch (type) {
         case 'username':
             dorks.push(
-                `"${identifier}" -site:x.com -site:twitter.com`,
+                `"${identifier}" -site:x.com -site:x.com`,
                 `"${identifier}" site:github.com`,
                 `"${identifier}" site:linkedin.com`,
                 `"${identifier}" site:reddit.com`,

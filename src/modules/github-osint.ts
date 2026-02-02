@@ -31,6 +31,8 @@ export interface GitHubUserProfile {
     joinedDate: string;
     avatarUrl: string;
     pinnedRepos: string[];
+    profileReadme: string | null;
+    extractedPhones: string[];
 }
 
 export interface GitHubSearchResult {
@@ -39,6 +41,7 @@ export interface GitHubSearchResult {
     userProfile: GitHubUserProfile | null;
     relatedUsers: string[];
     extractedEmails: string[];
+    extractedPhones: string[];
     executionTimeMs: number;
     errors: string[];
 }
@@ -54,6 +57,8 @@ async function getBrowser(): Promise<Browser> {
     }
     return browser;
 }
+
+const PHONE_REGEX = /(?:(?:\+|00)\d{1,3})?[-.\ s]?(?:\(?\d{1,4}\)?[-.\ s]?)?\d{3,4}[-.\ s]?\d{3,4}/g;
 
 /**
  * Search GitHub code for a query (email, username, etc.)
@@ -185,6 +190,8 @@ async function getGitHubProfile(page: Page, username: string): Promise<GitHubUse
             joinedDate: '',
             avatarUrl: '',
             pinnedRepos: [],
+            profileReadme: null,
+            extractedPhones: [],
         };
 
         // Display name
@@ -243,6 +250,33 @@ async function getGitHubProfile(page: Page, username: string): Promise<GitHubUse
             }
         }
 
+        // Profile README (many users have contact info here)
+        try {
+            const readmeEl = await page.$('article.markdown-body, [data-target="readme-toc.content"]');
+            if (readmeEl) {
+                profile.profileReadme = await readmeEl.textContent() ?? null;
+
+                // Extract phones from README
+                if (profile.profileReadme) {
+                    const phones = profile.profileReadme.match(PHONE_REGEX);
+                    if (phones) {
+                        profile.extractedPhones = [...new Set(phones)];
+                    }
+                }
+            }
+        } catch {
+            // README not found or failed to parse
+        }
+
+        // Also check bio for phones
+        if (profile.bio) {
+            const bioPhones = profile.bio.match(PHONE_REGEX);
+            if (bioPhones) {
+                profile.extractedPhones.push(...bioPhones);
+                profile.extractedPhones = [...new Set(profile.extractedPhones)];
+            }
+        }
+
         logger.info(`GitHub profile fetched: ${username}`);
         return profile;
     } catch (error) {
@@ -287,6 +321,7 @@ export async function searchGitHub(query: string, options: {
         userProfile: null,
         relatedUsers: [],
         extractedEmails: [],
+        extractedPhones: [],
         executionTimeMs: 0,
         errors: [],
     };
@@ -304,6 +339,9 @@ export async function searchGitHub(query: string, options: {
             result.userProfile = await getGitHubProfile(page, query);
             if (result.userProfile?.email) {
                 result.extractedEmails.push(result.userProfile.email);
+            }
+            if (result.userProfile?.extractedPhones) {
+                result.extractedPhones.push(...result.userProfile.extractedPhones);
             }
         }
 

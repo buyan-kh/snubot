@@ -14,6 +14,9 @@ import { searchPastes } from './paste-search.js';
 import { scrapeRedditUser } from './reddit-osint.js';
 import { lookupUsername } from './username-crosscheck.js';
 import { deepCrawl, type DeepCrawlResult } from './deep-crawler.js';
+import { searchBusinessDirectories, type BusinessDirectorySearchResult } from './business-directory.js';
+import { whoisLookup, type WhoisResult } from './whois-lookup.js';
+import { searchForumSignatures, type ForumSearchResult } from './forum-scraper.js';
 
 export interface WebsiteCrawlResult {
     url: string;
@@ -51,12 +54,15 @@ export interface MasterReconResult {
             email?: string | null;
         } | null;
         extractedEmails: string[];
+        extractedEmails: string[];
+        extractedPhones: string[];
         relatedUsers: string[];
     };
     pastes: {
         found: boolean;
         count: number;
         extractedEmails: string[];
+        extractedPhones: string[];
         sites: string[];
     };
     reddit: {
@@ -77,6 +83,9 @@ export interface MasterReconResult {
         allWallets: string[];
     };
     deepCrawl: DeepCrawlResult | null;
+    businessDirectories: BusinessDirectorySearchResult | null;
+    whois: WhoisResult | null;
+    forums: ForumSearchResult | null;
     scamScore: number;
     redFlags: string[];
     trustIndicators: string[];
@@ -233,12 +242,14 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
             codeCount: 0,
             profile: null,
             extractedEmails: [],
+            extractedPhones: [],
             relatedUsers: [],
         },
         pastes: {
             found: false,
             count: 0,
             extractedEmails: [],
+            extractedPhones: [],
             sites: [],
         },
         reddit: {
@@ -258,6 +269,9 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
             allWallets: [],
         },
         deepCrawl: null,
+        businessDirectories: null,
+        whois: null,
+        forums: null,
         scamScore: 0,
         redFlags: [],
         trustIndicators: [],
@@ -284,6 +298,20 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
         }),
         lookupUsername(cleanUsername).catch(e => {
             logger.warn('Platform check failed:', e);
+            return null;
+        }),
+    ]);
+
+    // Phase 2: Run business directories, WHOIS, and forum searches in parallel
+    const [businessDirResult, whoisResult, forumResult] = await Promise.allSettled([
+        searchBusinessDirectories(cleanUsername).catch(e => {
+            logger.warn('Business directory search failed:', e);
+            return null;
+        }),
+        // WHOIS lookup will be triggered if we find a website
+        Promise.resolve(null),
+        searchForumSignatures(cleanUsername).catch(e => {
+            logger.warn('Forum search failed:', e);
             return null;
         }),
     ]);
@@ -363,6 +391,10 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
             result.github.extractedEmails = gh.extractedEmails;
             result.aggregated.allEmails.push(...gh.extractedEmails);
         }
+        if (gh.extractedPhones) {
+            result.github.extractedPhones = gh.extractedPhones;
+            result.aggregated.allPhones.push(...gh.extractedPhones);
+        }
         if (gh.relatedUsers) {
             result.github.relatedUsers = gh.relatedUsers;
             result.aggregated.allUsernames.push(...gh.relatedUsers);
@@ -379,6 +411,10 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
         if (p.extractedData?.emails) {
             result.pastes.extractedEmails = p.extractedData.emails;
             result.aggregated.allEmails.push(...p.extractedData.emails);
+        }
+        if (p.extractedData?.phones) {
+            result.pastes.extractedPhones = p.extractedData.phones;
+            result.aggregated.allPhones.push(...p.extractedData.phones);
         }
         if (p.extractedData?.urls) {
             result.aggregated.allUrls.push(...p.extractedData.urls);
@@ -435,6 +471,7 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
 
             // Add deep crawl findings to aggregation
             result.aggregated.allEmails.push(...deepResult.allEmails);
+            result.aggregated.allPhones.push(...deepResult.allPhoneNumbers);
             result.aggregated.allUsernames.push(...deepResult.allUsernames);
             result.aggregated.allWallets = deepResult.allWallets;
 
@@ -446,6 +483,42 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
             result.errors.push('Deep crawl failed');
         }
     }
+
+    // Process Phase 2 results
+    // Business Directories
+    if (businessDirResult.status === 'fulfilled' && businessDirResult.value) {
+        result.businessDirectories = businessDirResult.value;
+        // Extract phones from directory results
+        for (const dir of businessDirResult.value.results) {
+            if (dir.phone) result.aggregated.allPhones.push(dir.phone);
+        }
+    }
+
+    // Forums
+    if (forumResult.status === 'fulfilled' && forumResult.value) {
+        result.forums = forumResult.value;
+        result.aggregated.allPhones.push(...forumResult.value.totalPhones);
+        result.aggregated.allEmails.push(...forumResult.value.totalEmails);
+    }
+
+    // WHOIS lookup (if website found)
+    if (websiteUrl) {
+        try {
+            const whois = await whoisLookup(websiteUrl);
+            if (whois) {
+                result.whois = whois;
+                if (whois.registrantPhone) result.aggregated.allPhones.push(whois.registrantPhone);
+                if (whois.registrantEmail) result.aggregated.allEmails.push(whois.registrantEmail);
+            }
+        } catch (error) {
+            logger.warn('WHOIS lookup failed:', error);
+        }
+    }
+
+    // Final deduplication
+    result.aggregated.allPhones = [...new Set(result.aggregated.allPhones)];
+    result.aggregated.allEmails = [...new Set(result.aggregated.allEmails)];
+
 
     result.executionTimeMs = Date.now() - startTime;
     logger.info(`Master Recon complete: ${cleanUsername} in ${result.executionTimeMs}ms`);

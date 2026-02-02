@@ -31,6 +31,14 @@ const CRYPTO_PATTERNS = {
     contractMention: /contract|token|mint|deploy|launch|presale|airdrop/gi,
 };
 
+// Phone patterns (US & International)
+const PHONE_PATTERNS = {
+    // Matches: +1-555-555-5555, 555-555-5555, (555) 555-5555, +44 7700 900077
+    general: /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}/g,
+    // Broader international: starts with + or 00, followed by digits/spaces/dashes, min length 8
+    international: /(?:(?:\+|00)\d{1,3})[-.\s]?(?:\d{1,4}[-.\s]?){1,4}\d{3,4}/g,
+};
+
 export interface Lead {
     type: 'email' | 'username' | 'url' | 'wallet';
     value: string;
@@ -42,6 +50,7 @@ export interface CrawlResult {
     url: string;
     title: string;
     emails: string[];
+    phoneNumbers: string[];
     usernames: string[];
     wallets: string[];
     scamMentions: string[];
@@ -56,6 +65,7 @@ export interface DeepCrawlResult {
 
     // All discovered data
     allEmails: string[];
+    allPhoneNumbers: string[];
     allUsernames: string[];
     allWallets: string[];
     allSocialLinks: string[];
@@ -96,7 +106,7 @@ export function generateCryptoScamDorks(username: string, emails: string[] = [])
         // History/past projects
         `"${username}" previous project`,
         `"${username}" founder OR developer`,
-        `"${username}" site:twitter.com OR site:x.com`,
+        `"${username}" site:x.com`,
 
         // Forum mentions
         `"${username}" site:reddit.com crypto`,
@@ -110,6 +120,60 @@ export function generateCryptoScamDorks(username: string, emails: string[] = [])
     }
 
     return dorks;
+}
+
+/**
+ * Generate phone-number focused search dorks
+ */
+export function generatePhoneDorks(username: string): string[] {
+    return [
+        // Direct contact searches
+        `"${username}" "phone number"`,
+        `"${username}" "contact me"`,
+        `"${username}" "call me"`,
+        `"${username}" "reach me"`,
+        `"${username}" mobile`,
+        `"${username}" cell`,
+
+        // Messaging apps
+        `"${username}" whatsapp`,
+        `"${username}" telegram`,
+        `"${username}" signal`,
+        `"${username}" viber`,
+
+        // Social media contact sections
+        `site:linkedin.com "${username}" contact`,
+        `site:facebook.com "${username}" phone`,
+        `site:instagram.com "${username}" contact`,
+
+        // YouTube channels (often have business contact)
+        `site:youtube.com "${username}" contact`,
+        `site:youtube.com "${username}" business`,
+
+        // Paste sites (leaks)
+        `site:pastebin.com "${username}" phone`,
+        `site:ghostbin.com "${username}" phone`,
+        `site:rentry.co "${username}" contact`,
+
+        // Cached/archived results
+        `cache:${username}`,
+        `site:archive.org "${username}" phone`,
+        `site:web.archive.org "${username}" contact`,
+
+        // Business directories
+        `site:whitepages.com "${username}"`,
+        `site:yellowpages.com "${username}"`,
+        `site:411.com "${username}"`,
+
+        // Forums and communities
+        `site:reddit.com "${username}" contact`,
+        `site:hackernews.com "${username}" email`,
+
+        // Resume/CV sites
+        `site:indeed.com "${username}" phone`,
+        `"${username}" resume phone`,
+        `"${username}" CV contact`,
+    ];
 }
 
 /**
@@ -187,6 +251,7 @@ async function crawlPage(page: Page, url: string): Promise<CrawlResult> {
         url,
         title: '',
         emails: [],
+        phoneNumbers: [],
         usernames: [],
         wallets: [],
         scamMentions: [],
@@ -211,6 +276,20 @@ async function crawlPage(page: Page, url: string): Promise<CrawlResult> {
         // Extract emails
         const emails = textContent.match(EMAIL_PATTERN) || [];
         result.emails = [...new Set((emails as string[]).map(e => e.toLowerCase()))];
+
+        // Extract phone numbers
+        const phones1 = textContent.match(PHONE_PATTERNS.general) || [];
+        const phones2 = textContent.match(PHONE_PATTERNS.international) || [];
+        // Filter out likely false positives (years, dates)
+        const allPhones = [...phones1, ...phones2].filter(p => {
+            const digits = p.replace(/\D/g, '');
+            // Valid phones usually 7-15 digits
+            if (digits.length < 7 || digits.length > 15) return false;
+            // Avoid years like 2020-2024
+            if (p.match(/^\d{4}-\d{4}$/)) return false;
+            return true;
+        });
+        result.phoneNumbers = [...new Set(allPhones)];
 
         // Extract usernames (@mentions)
         const usernames = textContent.match(USERNAME_PATTERN) || [];
@@ -310,6 +389,7 @@ export async function deepCrawl(
         executionTimeMs: 0,
         pagesAnalyzed: 0,
         allEmails: [...initialEmails],
+        allPhoneNumbers: [],
         allUsernames: [target, ...initialUsernames],
         allWallets: [],
         allSocialLinks: [],
@@ -335,9 +415,11 @@ export async function deepCrawl(
         });
 
         // Generate and execute scam-focused dorks
-        const dorks = generateCryptoScamDorks(target, initialEmails);
+        const cryptoDorks = generateCryptoScamDorks(target, initialEmails);
+        const phoneDorks = generatePhoneDorks(target);
+        const dorks = [...cryptoDorks, ...phoneDorks];
 
-        logger.info(`Executing ${dorks.length} crypto/scam dorks...`);
+        logger.info(`Executing ${dorks.length} dorks (crypto & phone)...`);
 
         for (const dork of dorks) {
             // Check time limit
@@ -374,6 +456,7 @@ export async function deepCrawl(
 
             // Aggregate data
             result.allEmails.push(...crawlResult.emails);
+            result.allPhoneNumbers.push(...crawlResult.phoneNumbers);
             result.allUsernames.push(...crawlResult.usernames);
             result.allWallets.push(...crawlResult.wallets);
             result.allSocialLinks.push(...crawlResult.socialLinks);
@@ -391,6 +474,7 @@ export async function deepCrawl(
 
         // Deduplicate
         result.allEmails = [...new Set(result.allEmails)];
+        result.allPhoneNumbers = [...new Set(result.allPhoneNumbers)];
         result.allUsernames = [...new Set(result.allUsernames)];
         result.allWallets = [...new Set(result.allWallets)];
         result.allSocialLinks = [...new Set(result.allSocialLinks)];

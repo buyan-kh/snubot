@@ -36,17 +36,12 @@ if (useRedis) {
 /**
  * Create rate limiter for API routes
  */
-export const apiRateLimiter = rateLimit({
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const limiterOptions: any = {
     windowMs: config.RATE_LIMIT_WINDOW_MS,
     max: config.RATE_LIMIT_MAX_REQUESTS,
     standardHeaders: true,
     legacyHeaders: false,
-    store: useRedis && redisClient ? new RedisStore({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-return
-        sendCommand: (async (command: string, ...args: string[]) =>
-            redisClient.call(command, ...args)) as any,
-        prefix: 'rl:api:',
-    }) : undefined, // Fallback to memory store if undefined
     keyGenerator: (req: Request): string => {
         // Use Discord user ID if available, otherwise IP
         return req.headers['x-discord-user-id'] as string || req.ip || 'unknown';
@@ -62,7 +57,18 @@ export const apiRateLimiter = rateLimit({
         // Skip rate limiting for health checks
         return req.path === '/health';
     },
-});
+};
+
+if (useRedis && redisClient) {
+    limiterOptions.store = new RedisStore({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-return
+        sendCommand: (async (command: string, ...args: string[]) =>
+            redisClient.call(command, ...args)) as any,
+        prefix: 'rl:api:',
+    });
+}
+
+export const apiRateLimiter = rateLimit(limiterOptions);
 
 /**
  * Stricter rate limiter for Discord commands (per user)

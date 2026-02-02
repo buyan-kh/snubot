@@ -12,7 +12,8 @@ import { logger } from '../lib/index.js';
 // PII extraction patterns
 const PATTERNS = {
     email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
-    phone: /(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}/g,
+    // Matches: +1-555-555-5555, 555-555-5555, (555) 555-5555, +44 7700 900077
+    phone: /(?:(?:\+|00)\d{1,3})?[-.\s]?(?:\(?\d{1,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}/g,
     discord: /(?:discord(?:\.gg|app\.com\/invite)\/|discord:\s*)([A-Za-z0-9_-]+)/gi,
     telegram: /(?:t\.me\/|telegram:\s*)@?([A-Za-z0-9_]+)/gi,
     github: /(?:github\.com\/)([A-Za-z0-9_-]+)/gi,
@@ -188,7 +189,7 @@ function extractPII(text: string): ExtractedPII {
     if (urls) {
         result.externalUrls = [...new Set(urls.filter(u =>
             !u.includes('x.com') &&
-            !u.includes('twitter.com') &&
+            !u.includes('x.com') &&
             !u.includes('t.co')
         ))];
     }
@@ -281,7 +282,7 @@ async function scrapeTweets(page: Page, username: string, maxTweets: number = 20
                 const links: string[] = [];
                 for (const linkEl of linkEls) {
                     const href = await linkEl.getAttribute('href') ?? '';
-                    if (href.startsWith('http') && !href.includes('x.com') && !href.includes('twitter.com')) {
+                    if (href.startsWith('http') && !href.includes('x.com') && !href.includes('x.com')) {
                         links.push(href);
                     }
                 }

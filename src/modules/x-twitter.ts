@@ -133,7 +133,7 @@ function parseCount(str: string): number {
  */
 function generateSearchQueries(username: string, profile: Partial<XProfileResult>): string[] {
     const queries: string[] = [
-        `"${username}" -site:x.com -site:twitter.com`,
+        `"${username}" -site:x.com -site:x.com`,
         `"@${username}" email`,
         `site:github.com "${username}"`,
         `site:linkedin.com "${username}"`,
@@ -162,9 +162,9 @@ export async function lookupXProfile(usernameOrUrl: string): Promise<XProfileRes
     // Extract username from URL if full URL provided
     let username = usernameOrUrl.trim();
 
-    // Handle full URLs like https://x.com/username or https://twitter.com/username
-    if (username.includes('x.com/') || username.includes('twitter.com/')) {
-        const match = username.match(/(?:x\.com|twitter\.com)\/([a-zA-Z0-9_]+)/);
+    // Handle full URLs like https://x.com/username or https://x.com/username
+    if (username.includes('x.com/') || username.includes('x.com/')) {
+        const match = username.match(/(?:x\.com|x\.com)\/([a-zA-Z0-9_]+)/);
         if (match) {
             username = match[1];
         }

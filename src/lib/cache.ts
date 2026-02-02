@@ -3,35 +3,41 @@ import { config } from '../config.js';
 import { logger } from './logger.js';
 
 class CacheClient {
-    private redis: Redis;
+    private redis: Redis | null = null;
     private connected: boolean = false;
 
     constructor() {
-        this.redis = new Redis(config.REDIS_URL, {
-            retryStrategy: (times: number) => {
-                if (times > 3) {
-                    logger.warn('Redis connection failed, continuing without cache');
-                    return null;
-                }
-                return Math.min(times * 200, 2000);
-            },
-            maxRetriesPerRequest: 3,
-        });
+        const useRedis = !!process.env.REDIS_URL;
 
-        this.redis.on('connect', () => {
-            this.connected = true;
-            logger.info('✅ Connected to Redis');
-        });
+        if (useRedis) {
+            this.redis = new Redis(config.REDIS_URL, {
+                retryStrategy: (times: number) => {
+                    if (times > 3) {
+                        logger.warn('Redis connection failed, continuing without cache');
+                        return null;
+                    }
+                    return Math.min(times * 200, 2000);
+                },
+                maxRetriesPerRequest: 3,
+            });
 
-        this.redis.on('error', (err: Error) => {
-            this.connected = false;
-            logger.error('Redis error:', err);
-        });
+            this.redis.on('connect', () => {
+                this.connected = true;
+                logger.info('✅ Connected to Redis');
+            });
 
-        this.redis.on('close', () => {
-            this.connected = false;
-            logger.warn('Redis connection closed');
-        });
+            this.redis.on('error', (err: Error) => {
+                this.connected = false;
+                logger.error('Redis error:', err);
+            });
+
+            this.redis.on('close', () => {
+                this.connected = false;
+                logger.warn('Redis connection closed');
+            });
+        } else {
+            logger.info('No REDIS_URL found, caching disabled');
+        }
     }
 
     private generateKey(type: string, identifier: string): string {
@@ -39,7 +45,7 @@ class CacheClient {
     }
 
     async get<T>(type: string, identifier: string): Promise<T | null> {
-        if (!this.connected) return null;
+        if (!this.connected || !this.redis) return null;
 
         try {
             const key = this.generateKey(type, identifier);
@@ -56,7 +62,7 @@ class CacheClient {
     }
 
     async set<T>(type: string, identifier: string, data: T, ttlSeconds?: number): Promise<void> {
-        if (!this.connected) return;
+        if (!this.connected || !this.redis) return;
 
         try {
             const key = this.generateKey(type, identifier);
@@ -69,7 +75,7 @@ class CacheClient {
     }
 
     async delete(type: string, identifier: string): Promise<void> {
-        if (!this.connected) return;
+        if (!this.connected || !this.redis) return;
 
         try {
             const key = this.generateKey(type, identifier);
@@ -98,7 +104,9 @@ class CacheClient {
     }
 
     async disconnect(): Promise<void> {
-        await this.redis.quit();
+        if (this.redis) {
+            await this.redis.quit();
+        }
         this.connected = false;
     }
 }
