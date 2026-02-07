@@ -50,6 +50,28 @@ const commands = [
                 .setMinLength(1)
                 .setMaxLength(50)
         ),
+
+    new SlashCommandBuilder()
+        .setName('phone')
+        .setDescription('🔍 Find phone numbers for a username (focused search)')
+        .addStringOption((option) =>
+            option
+                .setName('username')
+                .setDescription('Twitter/X username to search')
+                .setRequired(true)
+        )
+        .addStringOption((option) =>
+            option
+                .setName('email')
+                .setDescription('Email address (helps find correlations)')
+                .setRequired(false)
+        )
+        .addStringOption((option) =>
+            option
+                .setName('name')
+                .setDescription('Real name (for people search sites)')
+                .setRequired(false)
+        ),
 ].map((command) => command.toJSON());
 
 async function deployCommands(): Promise<void> {

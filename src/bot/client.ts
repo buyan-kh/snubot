@@ -13,6 +13,7 @@ import emailCommand from './commands/email.js';
 import privacyCommand from './commands/privacy.js';
 import googleCommand from './commands/google.js';
 import reconCommand from './commands/recon.js';
+import phoneCommand from './commands/phone.js';
 
 export function createClient(): Client {
     const client = new Client({
@@ -25,6 +26,7 @@ export function createClient(): Client {
     commands.set(privacyCommand.data.name, privacyCommand);
     commands.set(googleCommand.data.name, googleCommand);
     commands.set(reconCommand.data.name, reconCommand);
+    commands.set(phoneCommand.data.name, phoneCommand);
 
     // Attach to client for access in handlers
     (client as Client & { commands: Collection<string, Command> }).commands = commands;

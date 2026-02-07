@@ -17,6 +17,10 @@ import { deepCrawl, type DeepCrawlResult } from './deep-crawler.js';
 import { searchBusinessDirectories, type BusinessDirectorySearchResult } from './business-directory.js';
 import { whoisLookup, type WhoisResult } from './whois-lookup.js';
 import { searchForumSignatures, type ForumSearchResult } from './forum-scraper.js';
+import { searchImagesForPhones, type OCRSearchResult } from './image-ocr.js';
+import { searchTrueCaller, type TrueCallerSearchResult } from './truecaller-scraper.js';
+import { searchSocialMediaDeep, type SocialDeepSearchResult } from './social-deep-scraper.js';
+import { lookupEmailToPhone, type EmailPhoneSearchResult } from './email-phone-lookup.js';
 
 export interface WebsiteCrawlResult {
     url: string;
@@ -86,6 +90,10 @@ export interface MasterReconResult {
     businessDirectories: BusinessDirectorySearchResult | null;
     whois: WhoisResult | null;
     forums: ForumSearchResult | null;
+    imageOCR: OCRSearchResult | null;
+    trueCaller: TrueCallerSearchResult | null;
+    socialDeep: SocialDeepSearchResult | null;
+    emailPhoneLookup: EmailPhoneSearchResult | null;
     scamScore: number;
     redFlags: string[];
     trustIndicators: string[];
@@ -272,6 +280,10 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
         businessDirectories: null,
         whois: null,
         forums: null,
+        imageOCR: null,
+        trueCaller: null,
+        socialDeep: null,
+        emailPhoneLookup: null,
         scamScore: 0,
         redFlags: [],
         trustIndicators: [],
@@ -315,6 +327,23 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
             return null;
         }),
     ]);
+
+    // Phase 3: Advanced techniques (OCR, TrueCaller, Social Deep Scraping)
+    const [ocrResult, trueCallerResult, socialDeepResult] = await Promise.allSettled([
+        searchImagesForPhones(cleanUsername).catch(e => {
+            logger.warn('Image OCR search failed:', e);
+            return null;
+        }),
+        searchTrueCaller(cleanUsername).catch(e => {
+            logger.warn('TrueCaller search failed:', e);
+            return null;
+        }),
+        searchSocialMediaDeep(cleanUsername).catch(e => {
+            logger.warn('Social deep search failed:', e);
+            return null;
+        }),
+    ]);
+
 
     // Process X/Twitter result (Deep Recon)
     let websiteUrl: string | null = null;
@@ -512,6 +541,40 @@ export async function masterRecon(username: string, options: { deepCrawl?: boole
             }
         } catch (error) {
             logger.warn('WHOIS lookup failed:', error);
+        }
+    }
+
+    // Process Phase 3 results
+    // Image OCR
+    if (ocrResult.status === 'fulfilled' && ocrResult.value) {
+        result.imageOCR = ocrResult.value;
+        result.aggregated.allPhones.push(...ocrResult.value.totalPhones);
+        result.aggregated.allEmails.push(...ocrResult.value.totalEmails);
+    }
+
+    // TrueCaller
+    if (trueCallerResult.status === 'fulfilled' && trueCallerResult.value) {
+        result.trueCaller = trueCallerResult.value;
+        for (const tc of trueCallerResult.value.results) {
+            if (tc.phone) result.aggregated.allPhones.push(tc.phone);
+        }
+    }
+
+    // Social Deep Scraper
+    if (socialDeepResult.status === 'fulfilled' && socialDeepResult.value) {
+        result.socialDeep = socialDeepResult.value;
+        result.aggregated.allPhones.push(...socialDeepResult.value.totalPhones);
+        result.aggregated.allEmails.push(...socialDeepResult.value.totalEmails);
+    }
+
+    // Email-to-Phone Lookup (if we have emails)
+    if (result.aggregated.allEmails.length > 0) {
+        try {
+            const emailPhoneResult = await lookupEmailToPhone(result.aggregated.allEmails);
+            result.emailPhoneLookup = emailPhoneResult;
+            result.aggregated.allPhones.push(...emailPhoneResult.totalPhones);
+        } catch (error) {
+            logger.warn('Email-to-phone lookup failed:', error);
         }
     }
 
