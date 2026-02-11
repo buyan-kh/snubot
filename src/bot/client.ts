@@ -1,43 +1,24 @@
-/**
- * Discord.js Client Configuration
- */
-
 import { Client, GatewayIntentBits, Collection, type Interaction } from 'discord.js';
 import { config } from '../config.js';
-import { logger, checkDiscordRateLimit } from '../lib/index.js';
+import { logger } from '../lib/index.js';
 import type { Command } from './types.js';
-
-// Import commands
-// Import commands
-import emailCommand from './commands/email.js';
-import privacyCommand from './commands/privacy.js';
-import googleCommand from './commands/google.js';
-import reconCommand from './commands/recon.js';
-import phoneCommand from './commands/phone.js';
+import lookupCommand from './commands/lookup.js';
 
 export function createClient(): Client {
     const client = new Client({
         intents: [GatewayIntentBits.Guilds],
     });
 
-    // Create commands collection
     const commands = new Collection<string, Command>();
-    commands.set(emailCommand.data.name, emailCommand);
-    commands.set(privacyCommand.data.name, privacyCommand);
-    commands.set(googleCommand.data.name, googleCommand);
-    commands.set(reconCommand.data.name, reconCommand);
-    commands.set(phoneCommand.data.name, phoneCommand);
+    commands.set(lookupCommand.data.name, lookupCommand);
 
-    // Attach to client for access in handlers
     (client as Client & { commands: Collection<string, Command> }).commands = commands;
 
-    // Ready event
     client.once('ready', (readyClient) => {
-        logger.info(`🤖 Discord bot ready as ${readyClient.user.tag}`);
-        logger.info(`📡 Connected to ${readyClient.guilds.cache.size} guild(s)`);
+        logger.info(`Bot ready as ${readyClient.user.tag}`);
+        logger.info(`Connected to ${readyClient.guilds.cache.size} guild(s)`);
     });
 
-    // Interaction handler
     client.on('interactionCreate', async (interaction: Interaction) => {
         if (!interaction.isChatInputCommand()) return;
 
@@ -47,28 +28,18 @@ export function createClient(): Client {
             return;
         }
 
-        // Rate limiting
-        const rateCheck = checkDiscordRateLimit(interaction.user.id);
-        if (!rateCheck.allowed) {
-            await interaction.reply({
-                content: `⏳ Rate limited. Please wait ${rateCheck.retryAfter} seconds before making more OSINT queries.`,
-                ephemeral: true,
-            });
-            return;
-        }
-
         try {
             logger.info(`Command: /${interaction.commandName}`, {
                 user: interaction.user.tag,
                 guild: interaction.guild?.name ?? 'DM',
-                options: interaction.options.data.map((o) => `${o.name}=${o.value}`),
+                options: interaction.options.data.map(o => `${o.name}=${o.value}`),
             });
 
             await command.execute(interaction);
         } catch (error) {
             logger.error(`Command error: /${interaction.commandName}`, error);
 
-            const errorMessage = '❌ An error occurred while executing this command.';
+            const errorMessage = 'An error occurred while executing this command.';
 
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: errorMessage, ephemeral: true });
@@ -78,7 +49,6 @@ export function createClient(): Client {
         }
     });
 
-    // Error handling
     client.on('error', (error) => {
         logger.error('Discord client error:', error);
     });
