@@ -1,4 +1,4 @@
-import type { ExtractedPII } from '../types/index.js';
+import type { ExtractedPII, PIIItem } from '../types/index.js';
 
 const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 
@@ -72,7 +72,7 @@ export function formatPhone(phone: string): string {
     return phone.trim();
 }
 
-export function extractPII(text: string): ExtractedPII {
+export function extractPII(text: string, source: string): ExtractedPII {
     const emails = text.match(EMAIL_PATTERN) || [];
     const uniqueEmails = [...new Set(emails.map(e => e.toLowerCase()))];
 
@@ -95,24 +95,32 @@ export function extractPII(text: string): ExtractedPII {
     const uniqueNames = [...new Set(filteredNames)];
 
     return {
-        emails: uniqueEmails,
-        phones: uniquePhones,
-        names: uniqueNames,
+        emails: uniqueEmails.map(v => ({ value: v, source })),
+        phones: uniquePhones.map(v => ({ value: v, source })),
+        names: uniqueNames.map(v => ({ value: v, source })),
     };
 }
 
 export function mergePII(results: ExtractedPII[]): ExtractedPII {
-    const merged: ExtractedPII = { emails: [], phones: [], names: [] };
+    const emailMap = new Map<string, PIIItem>();
+    const phoneMap = new Map<string, PIIItem>();
+    const nameMap = new Map<string, PIIItem>();
 
     for (const result of results) {
-        merged.emails.push(...result.emails);
-        merged.phones.push(...result.phones);
-        merged.names.push(...result.names);
+        for (const item of result.emails) {
+            if (!emailMap.has(item.value)) emailMap.set(item.value, item);
+        }
+        for (const item of result.phones) {
+            if (!phoneMap.has(item.value)) phoneMap.set(item.value, item);
+        }
+        for (const item of result.names) {
+            if (!nameMap.has(item.value)) nameMap.set(item.value, item);
+        }
     }
 
-    merged.emails = [...new Set(merged.emails)];
-    merged.phones = [...new Set(merged.phones)];
-    merged.names = [...new Set(merged.names)];
-
-    return merged;
+    return {
+        emails: [...emailMap.values()],
+        phones: [...phoneMap.values()],
+        names: [...nameMap.values()],
+    };
 }

@@ -1,7 +1,12 @@
+export interface PIIItem {
+    value: string;
+    source: string;
+}
+
 export interface ExtractedPII {
-    emails: string[];
-    phones: string[];
-    names: string[];
+    emails: PIIItem[];
+    phones: PIIItem[];
+    names: PIIItem[];
 }
 
 export interface TweetData {
@@ -33,6 +38,7 @@ export interface LookupResult {
     username: string;
     profileName: string;
     profileBio: string;
+    profileLocation: string;
     tweets: TweetData[];
     scrapedPages: ScrapedPage[];
     braveSearches: BraveSearchResponse[];

@@ -1,12 +1,12 @@
 import axios from 'axios';
 import { config } from '../config.js';
 import { logger } from '../lib/logger.js';
-import { extractPII } from './pii-extractor.js';
+import { extractPII, mergePII } from './pii-extractor.js';
 import type { ExtractedPII, BraveSearchResponse } from '../types/index.js';
 
 const BRAVE_API_URL = 'https://api.search.brave.com/res/v1/web/search';
 const MAX_QUERIES = 10;
-const DELAY_MS = 300;
+const DELAY_MS = 1500;
 
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -16,13 +16,13 @@ function buildQueries(pii: ExtractedPII): string[] {
     const queries: string[] = [];
 
     for (const email of pii.emails.slice(0, 3)) {
-        queries.push(`"${email}" phone`);
-        queries.push(`"${email}" contact`);
+        queries.push(`"${email.value}" phone`);
+        queries.push(`"${email.value}" contact`);
     }
 
     for (const name of pii.names.slice(0, 3)) {
-        queries.push(`"${name}" phone number`);
-        queries.push(`"${name}" email contact`);
+        queries.push(`"${name.value}" phone number`);
+        queries.push(`"${name.value}" email contact`);
     }
 
     return queries.slice(0, MAX_QUERIES);
@@ -61,7 +61,7 @@ export async function braveSearchForPII(pii: ExtractedPII): Promise<{
     const queries = buildQueries(pii);
 
     if (queries.length === 0) {
-        return { searches: [], extractedPII: { emails: [], phones: [], names: [] } };
+        return { searches: [], extractedPII: { emails: [], phones: [], names: [] } as ExtractedPII };
     }
 
     logger.info(`Running ${queries.length} Brave searches`);
@@ -75,22 +75,11 @@ export async function braveSearchForPII(pii: ExtractedPII): Promise<{
         // Extract PII from search result descriptions
         for (const r of result.results) {
             const text = `${r.title} ${r.description}`;
-            allPII.push(extractPII(text));
+            allPII.push(extractPII(text, r.url || query));
         }
 
         await sleep(DELAY_MS);
     }
 
-    // Merge all extracted PII
-    const merged: ExtractedPII = { emails: [], phones: [], names: [] };
-    for (const p of allPII) {
-        merged.emails.push(...p.emails);
-        merged.phones.push(...p.phones);
-        merged.names.push(...p.names);
-    }
-    merged.emails = [...new Set(merged.emails)];
-    merged.phones = [...new Set(merged.phones)];
-    merged.names = [...new Set(merged.names)];
-
-    return { searches, extractedPII: merged };
+    return { searches, extractedPII: mergePII(allPII) };
 }

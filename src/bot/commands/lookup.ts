@@ -25,10 +25,11 @@ const lookupCommand: Command = {
             username,
             profileName: '',
             profileBio: '',
+            profileLocation: '',
             tweets: [],
             scrapedPages: [],
             braveSearches: [],
-            pii: { emails: [], phones: [], names: [] },
+            pii: { emails: [], phones: [], names: [] } as import('../../types/index.js').ExtractedPII,
             executionTimeMs: 0,
             errors: [],
         };
@@ -40,13 +41,15 @@ const lookupCommand: Command = {
             result.tweets = scrapeResult.tweets;
             result.profileName = scrapeResult.profile.displayName;
             result.profileBio = scrapeResult.profile.bio;
+            result.profileLocation = scrapeResult.profile.location;
             result.errors.push(...scrapeResult.errors);
 
-            // Stage 2: Collect links from tweets + profile website
+            // Stage 2: Collect links from tweets + profile website + bio links
             const allLinks: string[] = [];
             if (scrapeResult.profile.website) {
                 allLinks.push(scrapeResult.profile.website);
             }
+            allLinks.push(...scrapeResult.profile.bioLinks);
             for (const tweet of result.tweets) {
                 allLinks.push(...tweet.links);
             }
@@ -63,7 +66,7 @@ const lookupCommand: Command = {
             const allPII = [scrapeResult.profilePII];
 
             for (const tweet of result.tweets) {
-                allPII.push(extractPII(tweet.text));
+                allPII.push(extractPII(tweet.text, 'Tweet'));
             }
 
             for (const page of result.scrapedPages) {
@@ -113,6 +116,9 @@ function buildEmbeds(result: LookupResult): EmbedBuilder[] {
     if (result.profileBio) {
         main.addFields({ name: 'Bio', value: result.profileBio.slice(0, 1024), inline: false });
     }
+    if (result.profileLocation) {
+        main.addFields({ name: 'Location', value: result.profileLocation, inline: true });
+    }
 
     main.addFields({
         name: 'Stats',
@@ -135,7 +141,7 @@ function buildEmbeds(result: LookupResult): EmbedBuilder[] {
         if (result.pii.phones.length > 0) {
             piiEmbed.addFields({
                 name: `Phones (${result.pii.phones.length})`,
-                value: result.pii.phones.slice(0, 10).join('\n'),
+                value: result.pii.phones.slice(0, 10).map(p => `${p.value} — _${p.source}_`).join('\n'),
                 inline: false,
             });
         }
@@ -143,7 +149,7 @@ function buildEmbeds(result: LookupResult): EmbedBuilder[] {
         if (result.pii.emails.length > 0) {
             piiEmbed.addFields({
                 name: `Emails (${result.pii.emails.length})`,
-                value: result.pii.emails.slice(0, 10).join('\n'),
+                value: result.pii.emails.slice(0, 10).map(e => `${e.value} — _${e.source}_`).join('\n'),
                 inline: false,
             });
         }
@@ -151,7 +157,7 @@ function buildEmbeds(result: LookupResult): EmbedBuilder[] {
         if (result.pii.names.length > 0) {
             piiEmbed.addFields({
                 name: `Names (${result.pii.names.length})`,
-                value: result.pii.names.slice(0, 10).join('\n'),
+                value: result.pii.names.slice(0, 10).map(n => `${n.value} — _${n.source}_`).join('\n'),
                 inline: false,
             });
         }
