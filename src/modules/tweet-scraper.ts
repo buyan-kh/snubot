@@ -215,7 +215,7 @@ export async function scrapeTweets(username: string): Promise<ScrapeResult> {
         if (result.profile.displayName) {
             const name = result.profile.displayName.trim();
             if (name && !result.profilePII.names.some(n => n.value === name)) {
-                result.profilePII.names.unshift({ value: name, source: `https://x.com/${username}` });
+                result.profilePII.names.unshift({ value: name, source: `https://x.com/${username}`, count: 1 });
             }
         }
 
