@@ -1,21 +1,29 @@
 import { SlashCommandBuilder, EmbedBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { Command } from '../types.js';
-import { parseUsername, scrapeTweets, scrapeLinks, braveSearchForPII, mergePII, extractPII } from '../../modules/index.js';
+import { parseUsername, scrapeTweets, scrapeLinks, braveSearchForPII, mergePII, extractPII, verifyPhones } from '../../modules/index.js';
 import type { LookupResult } from '../../types/index.js';
+import type { PhoneVerificationResult } from '../../modules/phone-verifier.js';
 
 const lookupCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('lookup')
-        .setDescription('Look up an X.com profile - scrapes tweets, follows links, extracts PII')
+        .setDescription('Look up an X.com profile - finds phone numbers via scraping, search, and AI verification')
         .addStringOption(option =>
             option
                 .setName('target')
                 .setDescription('X/Twitter username, @handle, or profile URL')
                 .setRequired(true)
+        )
+        .addStringOption(option =>
+            option
+                .setName('email')
+                .setDescription('Known email address (improves search accuracy)')
+                .setRequired(false)
         ) as SlashCommandBuilder,
 
     async execute(interaction: ChatInputCommandInteraction): Promise<void> {
         const target = interaction.options.getString('target', true);
+        const email = interaction.options.getString('email') ?? undefined;
         const username = parseUsername(target);
         const startTime = Date.now();
 
@@ -23,6 +31,7 @@ const lookupCommand: Command = {
 
         const result: LookupResult = {
             username,
+            ...(email ? { email } : {}),
             profileName: '',
             profileBio: '',
             profileLocation: '',
@@ -55,14 +64,28 @@ const lookupCommand: Command = {
             }
             const uniqueLinks = [...new Set(allLinks)];
 
-            // Stage 3: Scrape external links
+            // Stage 3: Scrape external links (level 1)
             if (uniqueLinks.length > 0) {
                 await interaction.editReply(`Scraping ${uniqueLinks.length} linked pages...`);
                 result.scrapedPages = await scrapeLinks(uniqueLinks);
             }
 
-            // Stage 4: Extract PII from all sources
-            await interaction.editReply('Extracting information...');
+            // Stage 3.5: Level-2 deep crawl — follow links found within level-1 pages
+            const level1Urls = new Set(result.scrapedPages.map(p => p.url));
+            const level2Candidates = result.scrapedPages
+                .filter(p => !p.error)
+                .flatMap(p => p.links)
+                .filter(link => !level1Urls.has(link) && !uniqueLinks.includes(link));
+            const level2Urls = [...new Set(level2Candidates)].slice(0, 15);
+
+            if (level2Urls.length > 0) {
+                await interaction.editReply(`Scraping ${level2Urls.length} deeper links...`);
+                const level2Pages = await scrapeLinks(level2Urls);
+                result.scrapedPages.push(...level2Pages);
+            }
+
+            // Stage 4: Extract PII from all sources (phones + emails only)
+            await interaction.editReply('Extracting phone numbers...');
             const allPII = [scrapeResult.profilePII];
 
             for (const tweet of result.tweets) {
@@ -75,22 +98,68 @@ const lookupCommand: Command = {
                 }
             }
 
+            // Seed user-provided email into PII
+            if (email) {
+                allPII.push({
+                    emails: [{ value: email.toLowerCase(), source: 'User input', count: 1 }],
+                    phones: [],
+                    names: [],
+                });
+            }
+
             result.pii = mergePII(allPII);
 
-            // Stage 5: Brave Search enrichment
-            if (result.pii.emails.length > 0 || result.pii.names.length > 0) {
-                await interaction.editReply('Enriching with Brave Search...');
-                const braveResult = await braveSearchForPII(result.pii);
+            // Stage 5: Brave Search (use username + email + profile name to find phone numbers)
+            if (result.pii.emails.length > 0 || email) {
+                await interaction.editReply('Searching for phone numbers...');
+                const braveResult = await braveSearchForPII(result.pii, {
+                    ...(email ? { email } : {}),
+                    username,
+                    ...(result.profileLocation ? { location: result.profileLocation } : {}),
+                    ...(result.profileName ? { verifiedName: result.profileName } : {}),
+                });
                 result.braveSearches = braveResult.searches;
 
-                // Merge Brave PII into main results
+                // Merge Brave snippet PII into main results
                 result.pii = mergePII([result.pii, braveResult.extractedPII]);
+
+                // Stage 6: Scrape Brave result pages for deeper PII
+                const braveUrls = braveResult.searches
+                    .flatMap(s => s.results.map(r => r.url))
+                    .filter(Boolean);
+
+                if (braveUrls.length > 0) {
+                    await interaction.editReply(`Scraping ${braveUrls.length} search result pages...`);
+                    const bravePages = await scrapeLinks(braveUrls);
+                    result.scrapedPages.push(...bravePages);
+
+                    const bravePagePII = bravePages
+                        .filter(p => !p.error)
+                        .map(p => p.pii);
+                    if (bravePagePII.length > 0) {
+                        result.pii = mergePII([result.pii, ...bravePagePII]);
+                    }
+                }
+            }
+
+            // Stage 7: Verify phone numbers with Gemini
+            let phoneVerification: PhoneVerificationResult | null = null;
+            if (result.pii.phones.length > 0) {
+                await interaction.editReply('Verifying phone numbers with AI...');
+                phoneVerification = await verifyPhones(result.pii.phones, {
+                    username,
+                    ...(email ? { email } : {}),
+                    profileName: result.profileName,
+                    profileBio: result.profileBio,
+                    profileLocation: result.profileLocation,
+                    emails: result.pii.emails,
+                });
             }
 
             result.executionTimeMs = Date.now() - startTime;
 
             // Build response embeds
-            const embeds = buildEmbeds(result);
+            const embeds = buildEmbeds(result, phoneVerification);
             await interaction.editReply({ content: null, embeds });
 
         } catch (error) {
@@ -103,7 +172,7 @@ const lookupCommand: Command = {
     },
 };
 
-function buildEmbeds(result: LookupResult): EmbedBuilder[] {
+function buildEmbeds(result: LookupResult, phoneVerification?: PhoneVerificationResult | null): EmbedBuilder[] {
     const embeds: EmbedBuilder[] = [];
 
     const main = new EmbedBuilder()
@@ -132,18 +201,52 @@ function buildEmbeds(result: LookupResult): EmbedBuilder[] {
 
     embeds.push(main);
 
-    // PII embed
-    if (result.pii.phones.length > 0 || result.pii.emails.length > 0 || result.pii.names.length > 0) {
+    // Phone results embed
+    if (result.pii.phones.length > 0 || result.pii.emails.length > 0) {
         const piiEmbed = new EmbedBuilder()
-            .setTitle('Extracted Information')
+            .setTitle('Results')
             .setColor(0x00ff00);
 
         if (result.pii.phones.length > 0) {
-            piiEmbed.addFields({
-                name: `Phones (${result.pii.phones.length})`,
-                value: result.pii.phones.slice(0, 10).map(p => `${p.value} — _${p.source}_`).join('\n'),
-                inline: false,
-            });
+            // Show Gemini-verified phones if available
+            if (phoneVerification?.verifiedPhones && phoneVerification.verifiedPhones.length > 0) {
+                const high = phoneVerification.verifiedPhones.filter(v => v.confidence === 'high');
+                const medium = phoneVerification.verifiedPhones.filter(v => v.confidence === 'medium');
+                const low = phoneVerification.verifiedPhones.filter(v => v.confidence === 'low');
+                const lines: string[] = [];
+
+                for (const v of high) {
+                    const match = result.pii.phones.find(p => p.value === v.number);
+                    const source = match?.source ?? 'unknown';
+                    lines.push(`[HIGH] ${v.number} — _${source}_\n  ${v.reasoning}`);
+                }
+                for (const v of medium) {
+                    const match = result.pii.phones.find(p => p.value === v.number);
+                    const source = match?.source ?? 'unknown';
+                    lines.push(`[MED] ${v.number} — _${source}_\n  ${v.reasoning}`);
+                }
+                for (const v of low) {
+                    const match = result.pii.phones.find(p => p.value === v.number);
+                    const source = match?.source ?? 'unknown';
+                    lines.push(`[LOW] ${v.number} — _${source}_\n  ${v.reasoning}`);
+                }
+
+                piiEmbed.addFields({
+                    name: `Phones (${high.length + medium.length} likely from ${result.pii.phones.length} candidates)`,
+                    value: lines.slice(0, 15).join('\n').slice(0, 1024) || 'No confident matches',
+                    inline: false,
+                });
+            } else {
+                // Fallback: no Gemini verification (timeout, etc.)
+                const sortedPhones = [...result.pii.phones].sort((a, b) => b.count - a.count);
+                piiEmbed.addFields({
+                    name: `Phones (${sortedPhones.length} unverified)`,
+                    value: sortedPhones.slice(0, 10).map(p =>
+                        `${p.value}${p.count > 1 ? ` (${p.count}x)` : ''} — _${p.source}_`
+                    ).join('\n'),
+                    inline: false,
+                });
+            }
         }
 
         if (result.pii.emails.length > 0) {
@@ -155,9 +258,12 @@ function buildEmbeds(result: LookupResult): EmbedBuilder[] {
         }
 
         if (result.pii.names.length > 0) {
+            const sortedNames = [...result.pii.names].sort((a, b) => b.count - a.count);
             piiEmbed.addFields({
-                name: `Names (${result.pii.names.length})`,
-                value: result.pii.names.slice(0, 10).map(n => `${n.value} — _${n.source}_`).join('\n'),
+                name: 'Possible Names',
+                value: sortedNames.slice(0, 2).map(n =>
+                    `${n.value} (${n.count}x) — _${n.source}_`
+                ).join('\n'),
                 inline: false,
             });
         }

@@ -1,6 +1,7 @@
 export interface PIIItem {
     value: string;
     source: string;
+    count: number;
 }
 
 export interface ExtractedPII {
@@ -19,6 +20,7 @@ export interface ScrapedPage {
     url: string;
     title: string;
     textContent: string;
+    links: string[];
     pii: ExtractedPII;
     error: string | null;
 }
@@ -36,6 +38,7 @@ export interface BraveSearchResponse {
 
 export interface LookupResult {
     username: string;
+    email?: string;
     profileName: string;
     profileBio: string;
     profileLocation: string;

@@ -4,10 +4,24 @@ import { extractPII } from './pii-extractor.js';
 import type { ScrapedPage } from '../types/index.js';
 
 const SKIP_DOMAINS = [
-    'youtube.com', 'youtu.be', 'tiktok.com',
-    'spotify.com', 'twitch.tv',
+    'y.com',
+    // Video/media
+    'youtube.com', 'youtu.be', 'tiktok.com', 'spotify.com', 'twitch.tv',
+    // App stores
     'play.google.com', 'apps.apple.com',
-    'discord.gg', 'discord.com',
+    // Chat/social
+    'discord.gg', 'discord.com', 'telegram.org', 't.me',
+    // X/Twitter (legal pages, subdomains)
+    'twitter.com', 'x.com',
+    // Sites that block scrapers
+    'linkedin.com', 'leetcode.com', 'facebook.com', 'instagram.com',
+    // Generic docs/support pages (no personal PII)
+    'docs.github.com', 'github.blog', 'skills.github.com',
+    'support.github.com', 'securitylab.github.com',
+    'maintainers.github.com', 'archiveprogram.github.com',
+    'education.github.com', 'resources.github.com',
+    'developer.mozilla.org', 'stackoverflow.com',
+    'wikipedia.org', 'w3.org',
 ];
 
 const MAX_LINKS = 20;
@@ -27,6 +41,37 @@ function shouldSkip(url: string): boolean {
 function extractTitle(html: string): string {
     const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     return match?.[1]?.trim().replace(/\s+/g, ' ') ?? '';
+}
+
+/** Extract the root domain (last 2 labels) from a hostname, e.g. docs.github.com → github.com */
+function rootDomain(hostname: string): string {
+    const parts = hostname.split('.');
+    return parts.slice(-2).join('.');
+}
+
+function extractLinks(html: string, baseUrl: string): string[] {
+    const links: string[] = [];
+    const hrefRegex = /<a\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*>/gi;
+    let match: RegExpExecArray | null;
+    const baseRoot = rootDomain(new URL(baseUrl).hostname);
+
+    while ((match = hrefRegex.exec(html)) !== null) {
+        try {
+            const resolved = new URL(match[1], baseUrl).href;
+            // Only keep http(s) links
+            if (!resolved.startsWith('http')) continue;
+            // Skip same root domain (e.g. docs.github.com when scraping github.com)
+            const linkRoot = rootDomain(new URL(resolved).hostname);
+            if (linkRoot === baseRoot) continue;
+            // Skip domains we already filter out
+            if (shouldSkip(resolved)) continue;
+            links.push(resolved);
+        } catch {
+            // Invalid URL, skip
+        }
+    }
+
+    return [...new Set(links)];
 }
 
 function htmlToText(html: string): string {
@@ -59,6 +104,7 @@ async function scrapeSingleLink(url: string): Promise<ScrapedPage> {
         url,
         title: '',
         textContent: '',
+        links: [],
         pii: { emails: [], phones: [], names: [] } as import('../types/index.js').ExtractedPII,
         error: null,
     };
@@ -83,6 +129,7 @@ async function scrapeSingleLink(url: string): Promise<ScrapedPage> {
         const html = typeof response.data === 'string' ? response.data : String(response.data);
 
         scraped.title = extractTitle(html);
+        scraped.links = extractLinks(html, url);
         scraped.textContent = htmlToText(html);
         scraped.pii = extractPII(scraped.textContent, url);
 

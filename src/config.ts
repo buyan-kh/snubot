@@ -9,6 +9,7 @@ const envSchema = z.object({
     DISCORD_GUILD_ID: z.string().optional(),
     BRAVE_API_KEY: z.string().min(1, 'Brave API key is required'),
     X_BEARER_TOKEN: z.string().min(1, 'X API bearer token is required'),
+    GEMINI_API_KEY: z.string().min(1, 'Gemini API key is required'),
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 });
 

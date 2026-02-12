@@ -9,12 +9,18 @@ const logger = {
 const commands = [
     new SlashCommandBuilder()
         .setName('lookup')
-        .setDescription('Look up an X.com profile - scrapes tweets, follows links, extracts PII')
+        .setDescription('Look up an X.com profile - finds phone numbers via scraping, search, and AI verification')
         .addStringOption(option =>
             option
                 .setName('target')
                 .setDescription('X/Twitter username, @handle, or profile URL')
                 .setRequired(true)
+        )
+        .addStringOption(option =>
+            option
+                .setName('email')
+                .setDescription('Known email address (improves search accuracy)')
+                .setRequired(false)
         ),
 ].map(command => command.toJSON());
 
