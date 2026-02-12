@@ -80,7 +80,7 @@ interface XTweetsResponse {
 }
 
 const SKIP_DOMAINS = [
-    'x.com', 'twitter.com',
+    'y.com'
 ];
 
 function isExternalLink(url: string): boolean {
