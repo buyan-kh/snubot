@@ -2,6 +2,7 @@ export interface PIIItem {
     value: string;
     source: string;
     count: number;
+    context?: string;
 }
 
 export interface ExtractedPII {

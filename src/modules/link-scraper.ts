@@ -22,17 +22,22 @@ const SKIP_DOMAINS = [
     'education.github.com', 'resources.github.com',
     'developer.mozilla.org', 'stackoverflow.com',
     'wikipedia.org', 'w3.org',
+    // Academic — PDFs and citation pages are full of numeric sequences that match phone patterns
+    'arxiv.org', 'scholar.google.com', 'semanticscholar.org',
+    'aclweb.org', 'aclanthology.org', 'openreview.net',
+    'drive.google.com',
 ];
 
 const MAX_LINKS = 20;
 const REQUEST_TIMEOUT_MS = 10000;
-const MAX_BODY_BYTES = 512_000; // 500KB max per page
+const MAX_BODY_BYTES = 2_000_000; // 2MB — people-search result pages can be large
 const CONCURRENCY = 5;
 
 function shouldSkip(url: string): boolean {
     try {
-        const hostname = new URL(url).hostname;
-        return SKIP_DOMAINS.some(d => hostname.includes(d));
+        const parsed = new URL(url);
+        if (parsed.pathname.toLowerCase().endsWith('.pdf')) return true;
+        return SKIP_DOMAINS.some(d => parsed.hostname.includes(d));
     } catch {
         return true;
     }
@@ -74,7 +79,7 @@ function extractLinks(html: string, baseUrl: string): string[] {
     return [...new Set(links)];
 }
 
-function htmlToText(html: string): string {
+export function htmlToText(html: string): string {
     return html
         // Remove script and style blocks
         .replace(/<script[\s\S]*?<\/script>/gi, '')

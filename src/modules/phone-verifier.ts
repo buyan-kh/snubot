@@ -42,8 +42,24 @@ export async function verifyPhones(
 
     if (candidatePhones.length === 0) return result;
 
-    const phoneList = candidatePhones
-        .map(p => `- ${p.value} (seen ${p.count}x, found at: ${p.source})`)
+    // Cap candidates to avoid overwhelming Gemini (sort by count — most-seen first)
+    const MAX_CANDIDATES = 50;
+    const capped = [...candidatePhones]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, MAX_CANDIDATES);
+
+    if (candidatePhones.length > MAX_CANDIDATES) {
+        logger.info(`Capping phone candidates from ${candidatePhones.length} to ${MAX_CANDIDATES}`);
+    }
+
+    const phoneList = capped
+        .map(p => {
+            let line = `- ${p.value} (seen ${p.count}x, found at: ${p.source})`;
+            if (p.context) {
+                line += `\n  Context: "${p.context.slice(0, 200)}"`;
+            }
+            return line;
+        })
         .join('\n');
 
     const emailList = context.emails.length > 0
@@ -67,12 +83,13 @@ ${phoneList}
 
 ## Instructions
 1. Determine if each candidate is actually a phone number (not a date, ID number, zip code, price, year, or other numeric sequence)
-2. Numbers from people-search sites (spokeo, whitepages, cocofinder, truepeoplesearch, fastpeoplesearch, zoominfo, beenverified) that match the username or email are STRONG signals → high confidence
-3. Numbers found on personal websites or pages clearly belonging to this person → high confidence
-4. Area codes matching the profile location → increases confidence
-5. Numbers from unrelated pages, business/support lines, or generic contact pages → low confidence
-6. Numbers appearing multiple times across different sources are more likely real
-7. If a number is clearly not a phone number (too short, too long, obviously a date or ID), mark it low and explain why
+2. Use the Context text to judge relevance — a phone next to the person's name or phrases like "call me at", "reach me", "phone:" is more likely real
+3. Numbers from people-search sites (spokeo, whitepages, cocofinder, truepeoplesearch, fastpeoplesearch, zoominfo, beenverified) that match the username or email are STRONG signals → high confidence
+4. Numbers found on personal websites or pages clearly belonging to this person → high confidence
+5. Area codes matching the profile location → increases confidence
+6. Numbers from unrelated pages, business/support lines, or generic contact pages → low confidence
+7. Numbers appearing multiple times across different sources are more likely real
+8. If a number is clearly not a phone number (too short, too long, obviously a date or ID), mark it low and explain why
 
 Respond in this EXACT JSON format (no markdown, no code blocks, just raw JSON):
 {

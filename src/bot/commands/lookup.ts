@@ -1,6 +1,7 @@
 import { SlashCommandBuilder, EmbedBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { Command } from '../types.js';
-import { parseUsername, scrapeTweets, scrapeLinks, braveSearchForPII, mergePII, extractPII, verifyPhones } from '../../modules/index.js';
+import { logger } from '../../lib/logger.js';
+import { parseUsername, scrapeTweets, scrapeLinks, braveSearchForPII, mergePII, filterRelevantPII, pageMatchesTarget, extractPII, verifyPhones, deriveNameFromEmail, searchPeopleSites, parseLocation } from '../../modules/index.js';
 import type { LookupResult } from '../../types/index.js';
 import type { PhoneVerificationResult } from '../../modules/phone-verifier.js';
 
@@ -92,9 +93,20 @@ const lookupCommand: Command = {
                 allPII.push(extractPII(tweet.text, 'Tweet'));
             }
 
+            const targetIdentity = { username, profileName: result.profileName };
             for (const page of result.scrapedPages) {
                 if (!page.error) {
-                    allPII.push(page.pii);
+                    if (pageMatchesTarget(page.textContent, targetIdentity)) {
+                        // Page mentions the target — include all PII
+                        allPII.push(page.pii);
+                    } else {
+                        // Unrelated page — include phones/names but NOT emails
+                        allPII.push({
+                            emails: [],
+                            phones: page.pii.phones,
+                            names: page.pii.names,
+                        });
+                    }
                 }
             }
 
@@ -109,6 +121,31 @@ const lookupCommand: Command = {
 
             result.pii = mergePII(allPII);
 
+            // Stage 4.5: Derive name from email + people-search sites
+            let derivedEmailName: string | undefined;
+            const firstEmail = email || result.pii.emails[0]?.value;
+            if (firstEmail) {
+                const derived = deriveNameFromEmail(firstEmail);
+                if (derived) {
+                    derivedEmailName = derived.fullName;
+                    logger.info(`Derived name from email: ${derived.fullName}`);
+
+                    const parsedLoc = result.profileLocation ? parseLocation(result.profileLocation) : null;
+
+                    await interaction.editReply('Searching people-search sites...');
+                    const peopleResult = await searchPeopleSites({
+                        firstName: derived.firstName,
+                        lastName: derived.lastName,
+                        email: firstEmail,
+                        location: parsedLoc,
+                    });
+
+                    if (peopleResult.extractedPII.phones.length > 0 || peopleResult.extractedPII.emails.length > 0) {
+                        result.pii = mergePII([result.pii, peopleResult.extractedPII]);
+                    }
+                }
+            }
+
             // Stage 5: Brave Search (use username + email + profile name to find phone numbers)
             if (result.pii.emails.length > 0 || email) {
                 await interaction.editReply('Searching for phone numbers...');
@@ -117,6 +154,7 @@ const lookupCommand: Command = {
                     username,
                     ...(result.profileLocation ? { location: result.profileLocation } : {}),
                     ...(result.profileName ? { verifiedName: result.profileName } : {}),
+                    ...(derivedEmailName ? { derivedEmailName } : {}),
                 });
                 result.braveSearches = braveResult.searches;
 
@@ -135,12 +173,24 @@ const lookupCommand: Command = {
 
                     const bravePagePII = bravePages
                         .filter(p => !p.error)
-                        .map(p => p.pii);
+                        .map(p => {
+                            if (pageMatchesTarget(p.textContent, targetIdentity)) {
+                                return p.pii;
+                            }
+                            // Unrelated page — phones only
+                            return { emails: [], phones: p.pii.phones, names: p.pii.names } as import('../../types/index.js').ExtractedPII;
+                        });
                     if (bravePagePII.length > 0) {
                         result.pii = mergePII([result.pii, ...bravePagePII]);
                     }
                 }
             }
+
+            // Stage 6.5: Filter PII to items relevant to the target
+            result.pii = filterRelevantPII(result.pii, {
+                username,
+                profileName: result.profileName,
+            });
 
             // Stage 7: Verify phone numbers with Gemini
             let phoneVerification: PhoneVerificationResult | null = null;

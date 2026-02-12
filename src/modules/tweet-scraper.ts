@@ -5,8 +5,8 @@ import { extractPII } from './pii-extractor.js';
 import type { TweetData, ExtractedPII } from '../types/index.js';
 
 const X_API_BASE = 'https://api.x.com/2';
-const MAX_PAGES = 1;
-const TWEETS_PER_PAGE = 20;
+const INITIAL_TWEETS = 50;
+const EXTRA_TWEETS = 30;
 
 export function parseUsername(input: string): string {
     let cleaned = input.trim();
@@ -114,50 +114,58 @@ async function resolveUserId(username: string): Promise<XUserResponse> {
     return response.data;
 }
 
-async function fetchUserTweets(userId: string): Promise<{ tweets: XTweet[]; errors: string[] }> {
-    const allTweets: XTweet[] = [];
+async function fetchTweetPage(userId: string, count: number, paginationToken?: string): Promise<{ tweets: XTweet[]; nextToken?: string; errors: string[] }> {
     const errors: string[] = [];
-    let paginationToken: string | undefined;
+    const params: Record<string, string> = {
+        'max_results': String(count),
+        'exclude': 'retweets',
+        'tweet.fields': 'created_at,entities,text',
+    };
+    if (paginationToken) {
+        params['pagination_token'] = paginationToken;
+    }
 
-    for (let page = 0; page < MAX_PAGES; page++) {
-        try {
-            const params: Record<string, string> = {
-                'max_results': String(TWEETS_PER_PAGE),
-                'exclude': 'retweets',
-                'tweet.fields': 'created_at,entities,text',
-            };
+    try {
+        const response = await axios.get<XTweetsResponse>(
+            `${X_API_BASE}/users/${userId}/tweets`,
+            { headers: buildHeaders(), params, timeout: 15000 },
+        );
+        const data = response.data;
 
-            if (paginationToken) {
-                params['pagination_token'] = paginationToken;
+        if (data.errors?.length) {
+            for (const err of data.errors) {
+                errors.push(`X API: ${err.title} - ${err.detail}`);
             }
-
-            const response = await axios.get<XTweetsResponse>(
-                `${X_API_BASE}/users/${userId}/tweets`,
-                { headers: buildHeaders(), params, timeout: 15000 },
-            );
-
-            const data = response.data;
-
-            if (data.errors?.length) {
-                for (const err of data.errors) {
-                    errors.push(`X API: ${err.title} - ${err.detail}`);
-                }
-            }
-
-            if (data.data) {
-                allTweets.push(...data.data);
-            }
-
-            if (!data.meta?.next_token || (data.meta?.result_count ?? 0) === 0) {
-                break;
-            }
-
-            paginationToken = data.meta.next_token;
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : 'Tweet fetch failed';
-            errors.push(msg);
-            break;
         }
+
+        const result: { tweets: XTweet[]; nextToken?: string; errors: string[] } = {
+            tweets: data.data ?? [],
+            errors,
+        };
+        if (data.meta?.next_token) result.nextToken = data.meta.next_token;
+        return result;
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Tweet fetch failed';
+        return { tweets: [], errors: [msg] };
+    }
+}
+
+function tweetsHaveUrls(tweets: XTweet[]): boolean {
+    return tweets.some(t => t.entities?.urls?.some(u => isExternalLink(u.expanded_url)));
+}
+
+async function fetchUserTweets(userId: string): Promise<{ tweets: XTweet[]; errors: string[] }> {
+    // Fetch initial batch
+    const first = await fetchTweetPage(userId, INITIAL_TWEETS);
+    const allTweets = [...first.tweets];
+    const errors = [...first.errors];
+
+    // If no URLs found in first batch, fetch more
+    if (!tweetsHaveUrls(allTweets) && first.nextToken) {
+        logger.info(`No URLs in first ${allTweets.length} tweets, fetching ${EXTRA_TWEETS} more...`);
+        const second = await fetchTweetPage(userId, EXTRA_TWEETS, first.nextToken);
+        allTweets.push(...second.tweets);
+        errors.push(...second.errors);
     }
 
     return { tweets: allTweets, errors };

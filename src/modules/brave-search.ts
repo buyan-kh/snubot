@@ -12,42 +12,68 @@ function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function buildQueries(pii: ExtractedPII, opts?: { email?: string; username?: string; location?: string; verifiedName?: string }): string[] {
+function buildQueries(pii: ExtractedPII, opts?: { email?: string; username?: string; location?: string; verifiedName?: string; derivedEmailName?: string }): string[] {
     const queries: string[] = [];
+    const seen = new Set<string>();
     const loc = opts?.location ? ` ${opts.location}` : '';
 
-    // Profile name queries
-    if (opts?.verifiedName) {
-        queries.push(`"${opts.verifiedName}"${loc} phone number`);
-        if (opts?.email) {
-            queries.push(`"${opts.verifiedName}" "${opts.email}"`);
+    function add(q: string) {
+        const key = q.toLowerCase().trim();
+        if (!seen.has(key)) {
+            seen.add(key);
+            queries.push(q);
         }
     }
 
-    // Email-based queries
+    // Prefer whichever name has more words (e.g. "Buyan Khurel" over "Buyan")
+    const verifiedWords = opts?.verifiedName?.split(/\s+/).length ?? 0;
+    const derivedWords = opts?.derivedEmailName?.split(/\s+/).length ?? 0;
+    const fullName = derivedWords > verifiedWords ? opts?.derivedEmailName : (opts?.verifiedName || opts?.derivedEmailName);
+
+    // Tier 1: Site-specific queries
+    if (fullName) {
+        add(`site:spokeo.com "${fullName}"`);
+        add(`site:whitepages.com "${fullName}"`);
+    }
     if (opts?.email) {
-        queries.push(`"${opts.email}"${loc} phone number`);
-        queries.push(`"${opts.email}"${loc} phone`);
+        add(`site:spokeo.com "${opts.email}"`);
     }
 
-    // Username-based queries
+    // Tier 2: Full name + location
+    if (fullName && loc) {
+        add(`"${fullName}"${loc} phone number`);
+    }
+
+    // Tier 3: Full name WITHOUT location
+    if (fullName) {
+        add(`"${fullName}" phone number`);
+    }
+
+    // Tier 4: Email-based
+    if (opts?.email) {
+        add(`"${opts.email}" phone number`);
+    }
+
+    // Tier 5: Username-based
     if (opts?.username) {
-        queries.push(`"${opts.username}"${loc} phone number`);
-        queries.push(`"${opts.username}"${loc} phone`);
+        add(`"${opts.username}" phone number`);
     }
 
-    // Discovered email queries
+    // Tier 6: Discovered emails/names
     for (const email of pii.emails.slice(0, 2)) {
         if (email.value !== opts?.email?.toLowerCase()) {
-            queries.push(`"${email.value}"${loc} phone`);
+            add(`"${email.value}" phone number`);
+        }
+    }
+    for (const name of pii.names.slice(0, 2)) {
+        if (name.value !== fullName) {
+            add(`"${name.value}"${loc} phone number`);
         }
     }
 
-    // Extracted full names (e.g. from scraped pages — may have full name even if profile only shows first)
-    for (const name of pii.names.slice(0, 2)) {
-        if (name.value !== opts?.verifiedName) {
-            queries.push(`"${name.value}"${loc} phone number`);
-        }
+    // Tier 7: Unquoted fallback (broader search)
+    if (fullName) {
+        add(`${fullName} phone number`);
     }
 
     return queries.slice(0, MAX_QUERIES);
@@ -90,7 +116,7 @@ async function searchBrave(query: string): Promise<BraveSearchResponse> {
     return response;
 }
 
-export async function braveSearchForPII(pii: ExtractedPII, opts?: { email?: string; username?: string; location?: string; verifiedName?: string }): Promise<{
+export async function braveSearchForPII(pii: ExtractedPII, opts?: { email?: string; username?: string; location?: string; verifiedName?: string; derivedEmailName?: string }): Promise<{
     searches: BraveSearchResponse[];
     extractedPII: ExtractedPII;
 }> {
