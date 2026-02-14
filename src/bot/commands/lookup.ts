@@ -85,6 +85,17 @@ const lookupCommand: Command = {
                 result.scrapedPages.push(...level2Pages);
             }
 
+            // Stage 3.7: Scrape retweeted/quoted authors' profile links for connections
+            const allScrapedUrls = new Set(result.scrapedPages.map(p => p.url));
+            const authorLinksToScrape = scrapeResult.referencedAuthorLinks
+                .filter(link => !allScrapedUrls.has(link) && !uniqueLinks.includes(link));
+
+            if (authorLinksToScrape.length > 0) {
+                await interaction.editReply(`Checking ${authorLinksToScrape.length} retweeted authors' pages...`);
+                const authorPages = await scrapeLinks(authorLinksToScrape);
+                result.scrapedPages.push(...authorPages);
+            }
+
             // Stage 4: Extract PII from all sources (phones + emails only)
             await interaction.editReply('Extracting phone numbers...');
             const allPII = [scrapeResult.profilePII];

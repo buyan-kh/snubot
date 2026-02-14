@@ -32,6 +32,7 @@ interface ProfileMeta {
 export interface ScrapeResult {
     profile: ProfileMeta;
     tweets: TweetData[];
+    referencedAuthorLinks: string[];
     profilePII: ExtractedPII;
     errors: string[];
 }
@@ -68,10 +69,38 @@ interface XTweet {
     text: string;
     created_at?: string;
     entities?: XTweetEntity;
+    referenced_tweets?: Array<{
+        type: 'retweeted' | 'quoted' | 'replied_to';
+        id: string;
+    }>;
+    note_tweet?: {
+        text?: string;
+        entities?: XTweetEntity;
+    };
+}
+
+interface XIncludedUser {
+    id: string;
+    username: string;
+    name: string;
+    description?: string;
+    url?: string;
+    entities?: {
+        url?: {
+            urls?: Array<{ expanded_url?: string }>;
+        };
+        description?: {
+            urls?: Array<{ expanded_url?: string; display_url?: string }>;
+        };
+    };
 }
 
 interface XTweetsResponse {
     data?: XTweet[];
+    includes?: {
+        tweets?: XTweet[];
+        users?: XIncludedUser[];
+    };
     meta?: {
         next_token?: string;
         result_count?: number;
@@ -114,12 +143,13 @@ async function resolveUserId(username: string): Promise<XUserResponse> {
     return response.data;
 }
 
-async function fetchTweetPage(userId: string, count: number, paginationToken?: string): Promise<{ tweets: XTweet[]; nextToken?: string; errors: string[] }> {
+async function fetchTweetPage(userId: string, count: number, paginationToken?: string): Promise<{ tweets: XTweet[]; includedTweets: XTweet[]; includedUsers: XIncludedUser[]; nextToken?: string; errors: string[] }> {
     const errors: string[] = [];
     const params: Record<string, string> = {
         'max_results': String(count),
-        'exclude': 'retweets',
-        'tweet.fields': 'created_at,entities,text',
+        'tweet.fields': 'created_at,entities,text,referenced_tweets,note_tweet',
+        'expansions': 'referenced_tweets.id,referenced_tweets.id.author_id',
+        'user.fields': 'username,name,description,url,entities',
     };
     if (paginationToken) {
         params['pagination_token'] = paginationToken;
@@ -138,15 +168,17 @@ async function fetchTweetPage(userId: string, count: number, paginationToken?: s
             }
         }
 
-        const result: { tweets: XTweet[]; nextToken?: string; errors: string[] } = {
+        const result: { tweets: XTweet[]; includedTweets: XTweet[]; includedUsers: XIncludedUser[]; nextToken?: string; errors: string[] } = {
             tweets: data.data ?? [],
+            includedTweets: data.includes?.tweets ?? [],
+            includedUsers: data.includes?.users ?? [],
             errors,
         };
         if (data.meta?.next_token) result.nextToken = data.meta.next_token;
         return result;
     } catch (error) {
         const msg = error instanceof Error ? error.message : 'Tweet fetch failed';
-        return { tweets: [], errors: [msg] };
+        return { tweets: [], includedTweets: [], includedUsers: [], errors: [msg] };
     }
 }
 
@@ -154,11 +186,16 @@ function tweetsHaveUrls(tweets: XTweet[]): boolean {
     return tweets.some(t => t.entities?.urls?.some(u => isExternalLink(u.expanded_url)));
 }
 
-async function fetchUserTweets(userId: string): Promise<{ tweets: XTweet[]; errors: string[] }> {
+async function fetchUserTweets(userId: string): Promise<{ tweets: XTweet[]; includedTweets: Map<string, XTweet>; referencedAuthors: XIncludedUser[]; errors: string[] }> {
+    const includedMap = new Map<string, XTweet>();
+    const userMap = new Map<string, XIncludedUser>();
+
     // Fetch initial batch
     const first = await fetchTweetPage(userId, INITIAL_TWEETS);
     const allTweets = [...first.tweets];
     const errors = [...first.errors];
+    for (const t of first.includedTweets) includedMap.set(t.id, t);
+    for (const u of first.includedUsers) userMap.set(u.id, u);
 
     // If no URLs found in first batch, fetch more
     if (!tweetsHaveUrls(allTweets) && first.nextToken) {
@@ -166,15 +203,21 @@ async function fetchUserTweets(userId: string): Promise<{ tweets: XTweet[]; erro
         const second = await fetchTweetPage(userId, EXTRA_TWEETS, first.nextToken);
         allTweets.push(...second.tweets);
         errors.push(...second.errors);
+        for (const t of second.includedTweets) includedMap.set(t.id, t);
+        for (const u of second.includedUsers) userMap.set(u.id, u);
     }
 
-    return { tweets: allTweets, errors };
+    // Remove the target user from referenced authors
+    userMap.delete(userId);
+
+    return { tweets: allTweets, includedTweets: includedMap, referencedAuthors: [...userMap.values()], errors };
 }
 
 export async function scrapeTweets(username: string): Promise<ScrapeResult> {
     const result: ScrapeResult = {
         profile: { displayName: '', bio: '', location: '', website: '', bioLinks: [] },
         tweets: [],
+        referencedAuthorLinks: [],
         profilePII: { emails: [], phones: [], names: [] } as ExtractedPII,
         errors: [],
     };
@@ -227,29 +270,80 @@ export async function scrapeTweets(username: string): Promise<ScrapeResult> {
             }
         }
 
-        // Step 2: Fetch tweets
+        // Step 2: Fetch tweets (includes retweets + quoted tweet expansions + author profiles)
         logger.info(`Fetching tweets for @${username} (ID: ${user.id})`);
-        const { tweets: rawTweets, errors: tweetErrors } = await fetchUserTweets(user.id);
+        const { tweets: rawTweets, includedTweets, referencedAuthors, errors: tweetErrors } = await fetchUserTweets(user.id);
         result.errors.push(...tweetErrors);
 
         // Step 3: Transform tweets into our format
         for (const tweet of rawTweets) {
             const links: string[] = [];
+            let text = tweet.text;
+
+            // Use long-form note_tweet text if available
+            if (tweet.note_tweet?.text) {
+                text = tweet.note_tweet.text;
+            }
 
             // Extract expanded URLs from entities (proper URL expansion)
-            if (tweet.entities?.urls) {
-                for (const urlEntity of tweet.entities.urls) {
-                    if (isExternalLink(urlEntity.expanded_url)) {
-                        links.push(urlEntity.expanded_url);
+            const allEntities = [tweet.entities, tweet.note_tweet?.entities];
+            for (const entities of allEntities) {
+                if (entities?.urls) {
+                    for (const urlEntity of entities.urls) {
+                        if (isExternalLink(urlEntity.expanded_url)) {
+                            links.push(urlEntity.expanded_url);
+                        }
+                    }
+                }
+            }
+
+            // Extract links and text from referenced tweets (quoted/retweeted)
+            if (tweet.referenced_tweets) {
+                for (const ref of tweet.referenced_tweets) {
+                    const refTweet = includedTweets.get(ref.id);
+                    if (!refTweet) continue;
+
+                    const refText = refTweet.note_tweet?.text ?? refTweet.text;
+                    text += `\n${refText}`;
+
+                    const refEntities = [refTweet.entities, refTweet.note_tweet?.entities];
+                    for (const entities of refEntities) {
+                        if (entities?.urls) {
+                            for (const urlEntity of entities.urls) {
+                                if (isExternalLink(urlEntity.expanded_url)) {
+                                    links.push(urlEntity.expanded_url);
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             result.tweets.push({
-                text: tweet.text,
+                text,
                 timestamp: tweet.created_at ?? '',
                 links: [...new Set(links)],
             });
+        }
+
+        // Step 4: Collect website/bio links from retweeted/quoted authors' profiles
+        const authorLinks: string[] = [];
+        for (const author of referencedAuthors) {
+            const website = author.entities?.url?.urls?.[0]?.expanded_url ?? author.url;
+            if (website && isExternalLink(website)) {
+                authorLinks.push(website);
+            }
+            if (author.entities?.description?.urls) {
+                for (const urlEntity of author.entities.description.urls) {
+                    if (urlEntity.expanded_url && isExternalLink(urlEntity.expanded_url)) {
+                        authorLinks.push(urlEntity.expanded_url);
+                    }
+                }
+            }
+        }
+        result.referencedAuthorLinks = [...new Set(authorLinks)];
+        if (result.referencedAuthorLinks.length > 0) {
+            logger.info(`Found ${result.referencedAuthorLinks.length} links from ${referencedAuthors.length} retweeted/quoted authors`);
         }
 
         logger.info(`Fetched ${result.tweets.length} tweets from @${username} via X API`);

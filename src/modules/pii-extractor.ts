@@ -132,21 +132,30 @@ export function formatPhone(phone: string): string {
     return phone.trim();
 }
 
+// Strip long numeric sequences that generate false phone matches:
+// - URLs with numeric paths (twitter status IDs in links)
+// - Standalone 12+ digit numbers (tweet IDs, database IDs embedded in page text)
+const NUMERIC_URL_PATTERN = /https?:\/\/\S*\/\d{10,}\S*/gi;
+const LONG_NUMERIC_PATTERN = /\b\d{12,}\b/g;
+
 export function extractPII(text: string, source: string): ExtractedPII {
     const emails = text.match(EMAIL_PATTERN) || [];
     const uniqueEmails = [...new Set(emails.map(e => e.toLowerCase()))].filter(e => !isPlaceholderEmail(e));
+
+    // Remove URLs with numeric IDs and standalone long numbers before phone extraction
+    const textForPhones = text.replace(NUMERIC_URL_PATTERN, ' ').replace(LONG_NUMERIC_PATTERN, ' ');
 
     const phoneMap = new Map<string, string>(); // formatted → context
     for (const pattern of PHONE_PATTERNS) {
         pattern.lastIndex = 0;
         let phoneMatch: RegExpExecArray | null;
-        while ((phoneMatch = pattern.exec(text)) !== null) {
+        while ((phoneMatch = pattern.exec(textForPhones)) !== null) {
             if (isValidPhone(phoneMatch[0])) {
                 const formatted = formatPhone(phoneMatch[0]);
                 if (!phoneMap.has(formatted)) {
                     const start = Math.max(0, phoneMatch.index - 150);
-                    const end = Math.min(text.length, phoneMatch.index + phoneMatch[0].length + 150);
-                    phoneMap.set(formatted, text.slice(start, end).replace(/\s+/g, ' ').trim());
+                    const end = Math.min(textForPhones.length, phoneMatch.index + phoneMatch[0].length + 150);
+                    phoneMap.set(formatted, textForPhones.slice(start, end).replace(/\s+/g, ' ').trim());
                 }
             }
         }
