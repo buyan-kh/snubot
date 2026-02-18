@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, EmbedBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import type { Command } from '../types.js';
 import { logger } from '../../lib/logger.js';
-import { parseUsername, scrapeTweets, scrapeLinks, braveSearchForPII, mergePII, filterRelevantPII, pageMatchesTarget, extractPII, verifyPhones, deriveNameFromEmail, searchPeopleSites, parseLocation } from '../../modules/index.js';
+import { parseUsername, scrapeTweets, scrapeLinks, braveSearchForPII, mergePII, filterRelevantPII, pageMatchesTarget, extractPII, verifyPhones, deriveNameFromEmail, searchPeopleSites, parseLocation, getGitHubEmails } from '../../modules/index.js';
 import type { LookupResult } from '../../types/index.js';
 import type { PhoneVerificationResult } from '../../modules/phone-verifier.js';
 
@@ -54,7 +54,7 @@ const lookupCommand: Command = {
             result.profileLocation = scrapeResult.profile.location;
             result.errors.push(...scrapeResult.errors);
 
-            // Stage 2: Collect links from tweets + profile website + bio links
+            // Stage 2: Collect links from tweets + profile website + bio links + cross-platform
             const allLinks: string[] = [];
             if (scrapeResult.profile.website) {
                 allLinks.push(scrapeResult.profile.website);
@@ -63,6 +63,12 @@ const lookupCommand: Command = {
             for (const tweet of result.tweets) {
                 allLinks.push(...tweet.links);
             }
+
+            // Cross-platform username probing (#5)
+            allLinks.push(`https://github.com/${username}`);
+            allLinks.push(`https://medium.com/@${username}`);
+            allLinks.push(`https://about.me/${username}`);
+
             const uniqueLinks = [...new Set(allLinks)];
 
             // Stage 3: Scrape external links (level 1)
@@ -96,22 +102,42 @@ const lookupCommand: Command = {
                 result.scrapedPages.push(...authorPages);
             }
 
+            // Stage 3.8: Extract PII from referenced authors' bios (only if bio mentions target)
+            const targetIdentity = { username, profileName: result.profileName };
+            const authorBioPII: import('../../types/index.js').ExtractedPII[] = [];
+            for (const author of scrapeResult.referencedAuthors) {
+                if (pageMatchesTarget(author.bio, targetIdentity)) {
+                    logger.info(`Referenced author @${author.username} bio mentions target — extracting PII`);
+                    authorBioPII.push(extractPII(author.bio, `x.com/${author.username} bio`));
+                }
+            }
+
+            // Stage 3.9: GitHub email discovery
+            const gitHubEmails = await getGitHubEmails(username);
+            // Also try any GitHub usernames found in scraped pages
+            const gitHubPageMatch = result.scrapedPages
+                .find(p => p.url.includes('github.com/') && !p.error);
+            if (gitHubPageMatch) {
+                const ghUser = gitHubPageMatch.url.match(/github\.com\/([A-Za-z0-9_-]+)/)?.[1];
+                if (ghUser && ghUser.toLowerCase() !== username.toLowerCase()) {
+                    const moreEmails = await getGitHubEmails(ghUser);
+                    gitHubEmails.push(...moreEmails);
+                }
+            }
+
             // Stage 4: Extract PII from all sources (phones + emails only)
             await interaction.editReply('Extracting phone numbers...');
-            const allPII = [scrapeResult.profilePII];
+            const allPII = [scrapeResult.profilePII, ...authorBioPII];
 
             for (const tweet of result.tweets) {
                 allPII.push(extractPII(tweet.text, 'Tweet'));
             }
 
-            const targetIdentity = { username, profileName: result.profileName };
             for (const page of result.scrapedPages) {
                 if (!page.error) {
                     if (pageMatchesTarget(page.textContent, targetIdentity)) {
-                        // Page mentions the target — include all PII
                         allPII.push(page.pii);
                     } else {
-                        // Unrelated page — include phones/names but NOT emails
                         allPII.push({
                             emails: [],
                             phones: page.pii.phones,
@@ -130,23 +156,65 @@ const lookupCommand: Command = {
                 });
             }
 
+            // Seed GitHub commit emails
+            for (const ghEmail of [...new Set(gitHubEmails)]) {
+                allPII.push({
+                    emails: [{ value: ghEmail, source: 'GitHub commits', count: 1 }],
+                    phones: [],
+                    names: [],
+                });
+            }
+
             result.pii = mergePII(allPII);
 
-            // Stage 4.5: Derive name from email + people-search sites
+            // Stage 4.5: People-search sites
+            // Try multiple name sources: email-derived, profile display name, top discovered name
             let derivedEmailName: string | undefined;
             const firstEmail = email || result.pii.emails[0]?.value;
+            const parsedLoc = result.profileLocation ? parseLocation(result.profileLocation) : null;
+
+            // Collect candidate full names for people search
+            const peopleSearchNames: { firstName: string; lastName: string; fullName: string }[] = [];
+
+            // Source 1: Derive from email
             if (firstEmail) {
                 const derived = deriveNameFromEmail(firstEmail);
                 if (derived) {
                     derivedEmailName = derived.fullName;
+                    peopleSearchNames.push(derived);
                     logger.info(`Derived name from email: ${derived.fullName}`);
+                }
+            }
 
-                    const parsedLoc = result.profileLocation ? parseLocation(result.profileLocation) : null;
+            // Source 2: Profile display name (if it has 2+ words)
+            if (result.profileName) {
+                const words = result.profileName.trim().split(/\s+/);
+                if (words.length >= 2) {
+                    const candidate = { firstName: words[0], lastName: words[words.length - 1], fullName: result.profileName.trim() };
+                    if (!peopleSearchNames.some(n => n.fullName.toLowerCase() === candidate.fullName.toLowerCase())) {
+                        peopleSearchNames.push(candidate);
+                    }
+                }
+            }
 
-                    await interaction.editReply('Searching people-search sites...');
+            // Source 3: Top discovered name (most frequent from scraped pages)
+            const topDiscoveredName = [...result.pii.names].sort((a, b) => b.count - a.count)[0];
+            if (topDiscoveredName) {
+                const words = topDiscoveredName.value.trim().split(/\s+/);
+                if (words.length >= 2) {
+                    const candidate = { firstName: words[0], lastName: words[words.length - 1], fullName: topDiscoveredName.value.trim() };
+                    if (!peopleSearchNames.some(n => n.fullName.toLowerCase() === candidate.fullName.toLowerCase())) {
+                        peopleSearchNames.push(candidate);
+                    }
+                }
+            }
+
+            if (peopleSearchNames.length > 0) {
+                await interaction.editReply(`Searching people-search sites (${peopleSearchNames.map(n => n.fullName).join(', ')})...`);
+                for (const name of peopleSearchNames) {
                     const peopleResult = await searchPeopleSites({
-                        firstName: derived.firstName,
-                        lastName: derived.lastName,
+                        firstName: name.firstName,
+                        lastName: name.lastName,
                         email: firstEmail,
                         location: parsedLoc,
                     });
@@ -157,43 +225,41 @@ const lookupCommand: Command = {
                 }
             }
 
-            // Stage 5: Brave Search (use username + email + profile name to find phone numbers)
-            if (result.pii.emails.length > 0 || email) {
-                await interaction.editReply('Searching for phone numbers...');
-                const braveResult = await braveSearchForPII(result.pii, {
-                    ...(email ? { email } : {}),
-                    username,
-                    ...(result.profileLocation ? { location: result.profileLocation } : {}),
-                    ...(result.profileName ? { verifiedName: result.profileName } : {}),
-                    ...(derivedEmailName ? { derivedEmailName } : {}),
-                });
-                result.braveSearches = braveResult.searches;
+            // Stage 5: Brave Search (always run — use username + name even without email)
+            await interaction.editReply('Searching for phone numbers...');
+            const braveResult = await braveSearchForPII(result.pii, {
+                ...(email ? { email } : {}),
+                username,
+                ...(result.profileLocation ? { location: result.profileLocation } : {}),
+                ...(result.profileName ? { verifiedName: result.profileName } : {}),
+                ...(derivedEmailName ? { derivedEmailName } : {}),
+            });
+            result.braveSearches = braveResult.searches;
 
-                // Merge Brave snippet PII into main results
-                result.pii = mergePII([result.pii, braveResult.extractedPII]);
+            // Merge Brave snippet PII into main results
+            result.pii = mergePII([result.pii, braveResult.extractedPII]);
 
-                // Stage 6: Scrape Brave result pages for deeper PII
-                const braveUrls = braveResult.searches
-                    .flatMap(s => s.results.map(r => r.url))
-                    .filter(Boolean);
+            // Stage 6: Scrape Brave result pages for deeper PII
+            const braveUrls = braveResult.searches
+                .flatMap(s => s.results.map(r => r.url))
+                .filter(Boolean);
 
-                if (braveUrls.length > 0) {
-                    await interaction.editReply(`Scraping ${braveUrls.length} search result pages...`);
-                    const bravePages = await scrapeLinks(braveUrls);
-                    result.scrapedPages.push(...bravePages);
+            if (braveUrls.length > 0) {
+                await interaction.editReply(`Scraping ${braveUrls.length} search result pages...`);
+                const bravePages = await scrapeLinks(braveUrls);
+                result.scrapedPages.push(...bravePages);
 
-                    const bravePagePII = bravePages
-                        .filter(p => !p.error)
-                        .map(p => {
-                            if (pageMatchesTarget(p.textContent, targetIdentity)) {
-                                return p.pii;
-                            }
-                            // Unrelated page — phones only
-                            return { emails: [], phones: p.pii.phones, names: p.pii.names } as import('../../types/index.js').ExtractedPII;
-                        });
-                    if (bravePagePII.length > 0) {
-                        result.pii = mergePII([result.pii, ...bravePagePII]);
-                    }
+                const bravePagePII = bravePages
+                    .filter(p => !p.error)
+                    .map(p => {
+                        if (pageMatchesTarget(p.textContent, targetIdentity)) {
+                            return p.pii;
+                        }
+                        // Unrelated page — phones only
+                        return { emails: [], phones: p.pii.phones, names: p.pii.names } as import('../../types/index.js').ExtractedPII;
+                    });
+                if (bravePagePII.length > 0) {
+                    result.pii = mergePII([result.pii, ...bravePagePII]);
                 }
             }
 

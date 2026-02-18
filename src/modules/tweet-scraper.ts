@@ -29,10 +29,17 @@ interface ProfileMeta {
     bioLinks: string[];
 }
 
+export interface ReferencedAuthor {
+    username: string;
+    displayName: string;
+    bio: string;
+}
+
 export interface ScrapeResult {
     profile: ProfileMeta;
     tweets: TweetData[];
     referencedAuthorLinks: string[];
+    referencedAuthors: ReferencedAuthor[];
     profilePII: ExtractedPII;
     errors: string[];
 }
@@ -218,6 +225,7 @@ export async function scrapeTweets(username: string): Promise<ScrapeResult> {
         profile: { displayName: '', bio: '', location: '', website: '', bioLinks: [] },
         tweets: [],
         referencedAuthorLinks: [],
+        referencedAuthors: [],
         profilePII: { emails: [], phones: [], names: [] } as ExtractedPII,
         errors: [],
     };
@@ -342,6 +350,9 @@ export async function scrapeTweets(username: string): Promise<ScrapeResult> {
             }
         }
         result.referencedAuthorLinks = [...new Set(authorLinks)];
+        result.referencedAuthors = referencedAuthors
+            .filter(a => a.description)
+            .map(a => ({ username: a.username, displayName: a.name, bio: a.description ?? '' }));
         if (result.referencedAuthorLinks.length > 0) {
             logger.info(`Found ${result.referencedAuthorLinks.length} links from ${referencedAuthors.length} retweeted/quoted authors`);
         }

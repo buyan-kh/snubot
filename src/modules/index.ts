@@ -5,5 +5,6 @@ export { braveSearchForPII } from './brave-search.js';
 export { verifyPhones } from './phone-verifier.js';
 export { deriveNameFromEmail } from './email-parser.js';
 export { searchPeopleSites, parseLocation } from './people-search.js';
+export { getGitHubEmails } from './github-scraper.js';
 // --- Name verifier commented out (phone-only mode) ---
 // export { verifyNames } from './name-verifier.js';
